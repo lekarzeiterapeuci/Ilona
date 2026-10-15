@@ -1,0 +1,17 @@
+# Historia zmian
+
+Czat „Ilona” ma jeden numer wersji w formacie `MAJOR.MINOR.PATCH` (plik `chat/version.js`):
+
+- **PATCH** (1.0.**1**) — poprawka bez zmiany zachowania dla pacjenta (literówka, styl, drobny błąd).
+- **MINOR** (1.**1**.0) — nowa wiedza lub funkcja (nowe słowa kluczowe, nowa usługa, nowa zakładka panelu).
+- **MAJOR** (**2**.0.0) — zmiana zasad działania czatu.
+
+Nowy wpis dodaje polecenie: `npm run bump -- <patch|minor|major> "Opis zmiany"`.
+Zgodność wersji z tym plikiem sprawdza `npm run check` (także automatycznie przy każdym pushu).
+
+<!-- NEW ENTRIES BELOW -->
+
+## 2026-10-15
+
+### 1.0.0
+- Pierwsza wersja w repozytorium Ilona: czat (bot regułowy) z ustawieniami domyślnymi ze specyfikacji „Ilona” v1.1 oraz panel administracyjny, kontrola strony kliniki, strona testowa i dokumentacja.

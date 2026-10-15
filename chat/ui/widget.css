@@ -1,0 +1,434 @@
+/* Style widżetu czatu — ładowane wewnątrz Shadow DOM widżetu,
+   więc nic stąd nie wpływa na stronę, na której jest osadzony. */
+
+:host { all: initial; }
+
+.chat {
+  --brand: #14937c;          /* zieleń marki: logo, imię konsultantki, status */
+  --accent: #2e2787;         /* granat: przyciski, dymki pacjenta */
+  --accent-ink: #ffffff;
+  --mint: #dbf2ea;           /* dymki konsultanta */
+  --mint-ink: #0f2a24;
+  --online: #34c98a;
+  --ink: #141a2e;
+  --muted: #5f6677;
+  --line: #e2e5ec;
+  --bg: #f3f4f7;
+  --surface: #ffffff;
+  --danger: #b42318;
+  --danger-soft: #fef3f2;
+  /* Kolory przycisków według znaczenia (specyfikacja czatu, sekcja 4). Czerwony — WYŁĄCZNIE alarm i 112. */
+  --k-alarm: #c0392b;
+  --k-doctor: #2f7d5a;   /* konsultacja lekarska */
+  --k-psych: #6a4fd6;    /* psychiatra, leki psychiatryczne */
+  --k-therapy: #2f8478;  /* psycholog / terapeuta */
+  --k-paper: #3558c9;    /* recepta, L4, wyniki, skierowania, kobiety/mężczyźni */
+  --k-info: #5f6b7a;     /* cennik, jak umówić, kontakt, informacje */
+
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+.chat *, .chat *::before, .chat *::after { box-sizing: border-box; }
+.chat svg { display: block; }
+
+/* ---------- Układ pływający ---------- */
+.floating {
+  position: fixed;
+  bottom: 20px;
+  z-index: 2147483000;
+}
+.floating.right { right: 20px; }
+.floating.left { left: 20px; }
+
+.launcher {
+  width: 62px;
+  height: 62px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--brand);
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 10px 26px rgba(20, 147, 124, 0.35);
+  transition: transform 0.2s ease;
+  margin-left: auto;
+}
+.floating.left .launcher { margin-left: 0; }
+.launcher:hover { transform: translateY(-2px); }
+.launcher:focus-visible { outline: 3px solid color-mix(in srgb, var(--brand) 45%, transparent); outline-offset: 3px; }
+.launcher svg { width: 30px; height: 30px; }
+.floating.open .launcher { display: none; }
+
+.panel {
+  display: none;
+  width: min(400px, calc(100vw - 32px));
+  height: min(680px, calc(100vh - 40px));
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: 0 20px 56px rgba(20, 26, 46, 0.22);
+  overflow: hidden;
+}
+.open .panel { display: flex; flex-direction: column; animation: rise 0.22s ease-out; }
+
+/* ---------- Układ osadzony (strona demo) ---------- */
+.inline .panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 620px;
+  box-shadow: 0 6px 24px rgba(20, 26, 46, 0.08);
+}
+/* Okno wypełniające kontener (podgląd w panelu sterowania). */
+.chat.fill { height: 100%; }
+.inline.fill .panel { height: 100%; }
+
+/* Przełączanie ekranów: bez imienia — ekran powitalny, z imieniem — rozmowa. */
+.chat-view { display: none; }
+.has-name .intro { display: none; }
+.has-name .chat-view { display: flex; }
+.intro, .chat-view { flex: 1; min-height: 0; flex-direction: column; }
+.intro { display: flex; }
+
+/* ---------- Ekran powitalny (imię) ---------- */
+.intro { padding: 26px 26px 22px; overflow-y: auto; }
+.intro-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 14px; }
+.logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: var(--brand);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.logo svg { width: 26px; height: 26px; }
+.brand-name { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+
+/* Logo zajmuje wolne miejsce i zmniejsza się na niskich ekranach. */
+.intro-logo {
+  flex: 1 1 auto;
+  min-height: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 0 8px;
+}
+.intro-logo img {
+  display: block;
+  max-width: min(220px, 70%);
+  max-height: 100%;
+  min-height: 0;
+  object-fit: contain;
+}
+.intro-form { padding-top: 12px; display: flex; flex-direction: column; }
+.intro-title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.18;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.intro-lead { margin: 14px 0 26px; font-size: 16px; color: var(--muted); }
+.intro-label { font-weight: 700; font-size: 14px; margin-bottom: 10px; }
+.intro-input {
+  font: inherit;
+  font-size: 17px;
+  color: var(--ink);
+  padding: 15px 20px;
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.intro-input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent); }
+/* Zgoda na zapis rozmowy (widoczna tylko przy poziomie 2 lub 3). */
+.consent {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 14px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  cursor: pointer;
+}
+.consent input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
+.consent-link { color: var(--accent); font-weight: 600; }
+.primary {
+  margin-top: 16px;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  padding: 17px 20px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+.primary:hover { filter: brightness(1.12); }
+.primary:active { transform: scale(0.99); }
+.intro-hint { margin: 16px 0 0; text-align: center; font-size: 13px; color: var(--muted); }
+
+/* ---------- Nagłówek rozmowy ---------- */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 16px 16px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.avatar {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.avatar svg { width: 26px; height: 26px; }
+.status-dot {
+  position: absolute;
+  right: -1px;
+  bottom: 1px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--online);
+  border: 2.5px solid var(--surface);
+}
+.title { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.title strong { font-size: 17px; font-weight: 750; letter-spacing: -0.01em; }
+.subtitle { font-size: 13.5px; color: var(--brand); }
+.close {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.close:hover { background: var(--line); }
+.close svg { width: 20px; height: 20px; }
+
+/* ---------- Wiadomości ---------- */
+.log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 16px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scroll-behavior: smooth;
+}
+.day { align-self: center; font-size: 13px; color: var(--muted); }
+.notice {
+  align-self: center;
+  max-width: 92%;
+  margin-top: -6px;
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: center;
+}
+.notice a { color: var(--brand); font-weight: 600; text-decoration: none; }
+/* Komunikat okresowy z panelu (np. święta, przerwa w działaniu infolinii). */
+.announce {
+  align-self: stretch;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #fff7e6;
+  border: 1px solid #f3d9a4;
+  color: #6b4a00;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.msg { display: flex; flex-direction: column; gap: 5px; max-width: 82%; }
+.msg.enter { animation: rise 0.2s ease-out; }
+.msg.user { align-self: flex-end; align-items: flex-end; }
+.msg.bot { align-self: flex-start; }
+
+.who { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; }
+/* Miniatura logo przy imieniu konsultantki — jak zdjęcie profilowe, ale zaokrąglony kwadrat. */
+.who-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #fff;
+  border: 1px solid var(--line);
+  object-fit: cover;
+  flex: none;
+}
+.bot .who { color: var(--brand); }
+.user .who { color: var(--accent); }
+
+.bubble {
+  padding: 11px 15px;
+  border-radius: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 15.5px;
+}
+.bot .bubble { background: var(--mint); color: var(--mint-ink); border-top-left-radius: 6px; }
+.user .bubble { background: var(--accent); color: var(--accent-ink); border-top-right-radius: 6px; }
+/* Karta alarmowa (A, B): zawsze rozwinięta, czerwona, przycisk 112 min. 44 px. */
+.emergency { max-width: 92%; }
+.emergency .bubble {
+  background: #fdecea;
+  color: #8e2418;
+  border: 1.5px solid var(--k-alarm);
+  border-top-left-radius: 6px;
+  font-weight: 700;
+}
+.emergency .who { color: #8e2418; }
+
+/* Małe przyciski informacyjne (cennik, kontakt, „Jaki specjalista?”) — szary obrys. */
+.links { display: flex; flex-wrap: wrap; gap: 7px; }
+.link {
+  --k: #5f6b7a;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1.5px solid var(--k);
+  background: var(--surface);
+  color: var(--k);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+}
+.link:hover { background: var(--k); color: #fff; }
+.link:focus-visible { outline: 3px solid color-mix(in srgb, var(--k) 40%, transparent); outline-offset: 2px; }
+/* 112 — czerwony, WYŁĄCZNIE tutaj; min. 44 px wysokości. */
+.link.k-alarm { --k: #c0392b; background: var(--k); color: #fff; min-height: 44px; padding: 10px 18px; border-radius: 12px; font-size: 15px; font-weight: 800; }
+.link.k-alarm:hover { filter: brightness(1.1); }
+
+/* Kafelki usług — kolor z ustawień (--k); obrys = wariant tej samej grupy. */
+.msg.bot:has(.tiles) { max-width: 100%; width: 100%; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tile {
+  min-width: 0;
+  --k: #2f7d5a;
+  --k-ink: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 70px;
+  padding: var(--tile-pad, 5px);
+  border: 2px solid var(--k);
+  border-radius: 14px;
+  background: var(--k);
+  color: var(--k-ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--k) 25%, transparent);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.tile.outline { background: var(--surface); color: var(--k); box-shadow: none; }
+.tile:hover { transform: translateY(-2px); filter: brightness(1.06); }
+.tile:focus-visible { outline: 3px solid color-mix(in srgb, var(--k) 45%, transparent); outline-offset: 2px; }
+.tile-name { max-width: 100%; min-width: 0; font-size: var(--tile-fs, 13.5px); font-weight: 750; line-height: 1.2; overflow-wrap: anywhere; }
+.tile-price { align-self: flex-start; font-size: calc(var(--tile-fs, 13.5px) * 0.89); font-weight: 800; padding: 2px 8px; border-radius: 99px; background: color-mix(in srgb, currentColor 18%, transparent); }
+@media (max-width: 380px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Przełącznik „dopasuj wysokość”: kafelek tak wysoki jak jego treść (bez ceny — niższy). */
+.tiles-fit .tiles { align-items: start; }
+.tiles-fit .tile { min-height: 0; justify-content: flex-start; }
+/* Przełącznik „bez przenoszenia liter”: wyrazy nie są łamane w środku; linie wyrównane. */
+.tiles-nobreak .tile-name { overflow-wrap: normal; word-break: normal; hyphens: manual; text-wrap: balance; }
+/* Przełącznik „szerokość dopasowana do tekstu”: kafelki w rzędach o szerokości treści. */
+.tiles-autow .tiles { display: flex; flex-wrap: wrap; align-items: stretch; }
+.tiles-autow.tiles-fit .tiles { align-items: flex-start; }
+.tiles-autow .tile { flex: 0 1 auto; max-width: 100%; }
+/* Przełącznik „równe odstępy w pionie” (klasę „packed” ustawia layoutTiles po pomiarze). */
+.tiles.packed { grid-auto-rows: 1px; row-gap: 0; align-items: start; }
+/* Przełączniki „wyśrodkuj w poziomie” / „wyśrodkuj w pionie” — niezależne. */
+.tiles-center-h .tile { align-items: center; text-align: center; }
+.tiles-center-h .tile-price { align-self: center; }
+.tiles-center-v .tile { justify-content: center; }
+/* Tylko jeden kafelek w odpowiedzi — nie wciśnięty w 1/3 szerokości: napis w jednej linii
+   (jeśli się mieści), wysokość według treści (bez min. 70 px). */
+.tiles-single-fit .tiles.single { display: flex; }
+.tiles-single-fit .tiles.single .tile { flex: 0 1 auto; max-width: 100%; min-height: 0; justify-content: flex-start; }
+
+/* Stały dopisek „W nagłym zagrożeniu życia dzwoń 112 lub 999.” */
+.sos { margin: 0; padding: 0 14px 12px; background: var(--surface); font-size: 12.5px; font-weight: 650; color: #8e2418; text-align: center; }
+.intro .sos { padding: 12px 0 0; background: none; }
+
+/* ---------- Pole wpisywania ---------- */
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 12px 14px 8px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+.input {
+  flex: 1;
+  font: inherit;
+  font-size: 15.5px;
+  color: inherit;
+  resize: none;
+  padding: 13px 20px;
+  border: 1.5px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  outline: none;
+  max-height: 120px;
+}
+.input:focus { border-color: var(--accent); background: var(--surface); }
+.input::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.send {
+  width: 50px;
+  height: 50px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.send:hover { filter: brightness(1.12); }
+.send:disabled { opacity: 0.5; cursor: default; }
+.send svg { width: 22px; height: 22px; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes blink { 0%, 80%, 100% { opacity: 0.35; } 40% { opacity: 1; } }
+
+@media (max-width: 480px) {
+  .floating { bottom: 12px; }
+  .floating.right { right: 12px; }
+  .floating.left { left: 12px; }
+  .floating.open { inset: 0; }
+  .floating .panel { width: 100vw; height: 100dvh; border-radius: 0; border: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .open .panel, .msg.enter, .typing i { animation: none; }
+}

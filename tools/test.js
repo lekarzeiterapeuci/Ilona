@@ -1,0 +1,531 @@
+// Testy czatu (bot), panelu sterowania, serwera panelu i kontroli strony. Uruchom: npm test
+// Każdy przypadek: wiadomość -> oczekiwana intencja (lub jedna z kilku).
+// Niezaliczony test blokuje publikację (GitHub Actions uruchamia npm test przy każdym pushu).
+import { readFileSync } from 'node:fs';
+import { respond } from '../chat/core/pipeline.js';
+import { botEngine } from '../chat/engine/bot-engine.js';
+import { INTENTS, siteFacts } from '../chat/core/knowledge.js';
+import { setPanelConfig, matchRule } from '../chat/settings/client.js';
+import { sanitizeConfig, filterLogEntry, DEFAULT_CONFIG, wrapSettings, unwrapSettings, SETTINGS_KEYS } from '../chat/settings/schema.js';
+import { initPanel, getPanelConfig, panelStatus } from '../chat/settings/client.js';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { anonymize } from '../chat/core/privacy.js';
+import { checkSite, collectLinks } from '../panel/site-check.js';
+
+
+const CASES = [
+  // Bezpieczeństwo — musi ZAWSZE wygrać, w każdym silniku.
+  ['Od godziny boli mnie w klatce piersiowej i drętwieje ręka', 'emergency'],
+  ['nie mogę oddychać', 'emergency'],
+  ['nie chcę już żyć', 'crisis'],
+  ['myślę o samobójstwie', 'crisis'],
+  // Kierowanie.
+  ['mam wysypkę na rękach', 'skora'],
+  ['szukam dermatologa', 'skora'],
+  ['od tygodnia mam gorączkę i kaszel', 'infekcja'],
+  ['potrzebuję L4', 'l4'],
+  ['potrzebuję e-recepty na mój lek', 'recepta'],
+  ['mam wysokie ciśnienie', 'serce'],
+  ['mam depresję', 'psychiatra'],
+  ['chcę porozmawiać z psychologiem', 'psycholog'],
+  ['Chciałabym umówić wizytę u terapeuty', 'psycholog'],
+  ['pękła prezerwatywa', 'dzien_po'],
+  ['nie mogę zasnąć', 'bezsennosc'],
+  ['mam hashimoto', 'tarczyca'],
+  ['zgaga po jedzeniu', 'zoladek'],
+  ['do jakiego lekarza mam iść', 'jaki_specjalista'],
+  // Sprawy organizacyjne.
+  ['ile kosztuje psychiatra', [/^cennik/, 'psychiatra']],
+  ['jak umówić wizytę', 'umow'],
+  ['numer telefonu', 'kontakt'],
+  ['dzień dobry', 'powitanie'],
+  // Bez opinii medycznych.
+  ['jaką dawkę ibuprofenu mogę wziąć', ['opinia', /^opinia\+/]],
+  ['jaki lek na trądzik', [/^opinia\+skora$/, 'opinia']],
+  ['czy to rak', 'opinia'],
+  // Nie na temat -> komunikat z infolinią.
+  ['jaka jutro pogoda', 'offtopic'],
+  ['kto wygra wybory', 'offtopic'],
+  ['asdkjh qwe zzz', ['offtopic', 'fallback']],
+];
+
+const matches = (got, exp) =>
+  [].concat(exp).some((e) => (e instanceof RegExp ? e.test(got) : e === got));
+
+let failed = 0;
+async function run(label, engine) {
+  let ok = 0;
+  for (const [msg, exp] of CASES) {
+    const r = await respond(engine, msg);
+    if (matches(r.intent, exp)) ok++;
+    else {
+      failed++;
+      console.log(`  ✗ [${label}] "${msg}" → ${r.intent} (oczekiwano: ${[].concat(exp).join(' | ')})`);
+    }
+    if (!r.text) {
+      failed++;
+      console.log(`  ✗ [${label}] "${msg}" → pusta odpowiedź`);
+    }
+  }
+  console.log(`${label}: ${ok}/${CASES.length}`);
+}
+
+await run('bot', botEngine);
+let r;
+
+// Spójność bazy wiedzy: unikalne id, każda odpowiedź ma tekst.
+const ids = new Set();
+for (const i of INTENTS) {
+  if (ids.has(i.id)) { failed++; console.log(`  ✗ duplikat intencji ${i.id}`); }
+  ids.add(i.id);
+  if (!i.answer?.text) { failed++; console.log(`  ✗ intencja ${i.id} bez odpowiedzi`); }
+}
+
+// =============================================================================
+// Testy akceptacyjne ze specyfikacji czatu „Ilona” (v1.1, sekcja 10) — bot.
+// Niezaliczony test blokuje publikację (GitHub Actions uruchamia npm test).
+// =============================================================================
+
+const urlOf = (r, label) => r.links.find((l) => l.label.startsWith(label))?.url || '';
+const labels = (r) => r.links.map((l) => l.label);
+const tiles = (r) => r.links.filter((l) => l.tile);
+const svcIds = (r) => r.links.map((l) => l.id);
+// A i B (v1.1): u góry zielona odpowiedź, czerwona karta z 112 — osobno (r.alarm), zawsze POD nią.
+const ALARM_OK = (r) => r.emergency && r.alarm?.links[0]?.url === 'tel:112' && r.alarm.text.includes('112 lub 999') && !r.links.some((l) => l.url === 'tel:112') && !labels(r).some((l) => l.includes('zł'));
+const A_OK = (r) => ALARM_OK(r) && r.text.startsWith('Zadbaj o swoje bezpieczeństwo') && labels(r)[0] === 'Umów konsultację lekarską';
+const B_OK = (r) => ALARM_OK(r) && ['psychiatra', 'psycholog', 'terapeuta'].every((id) => svcIds(r).includes(id));
+const L_OK = (r) => r.case === 'L' && r.text.startsWith('Nie jestem pewna') && tiles(r).length >= 5 && r.links.some((l) => l.ask === 'Jaki specjalista?');
+const D_OK = (r) => r.case === 'D' && svcIds(r).slice(0, 3).join() === 'wizyta_umow,wyniki,skierowanie' && new Set(tiles(r).slice(0, 3).map((l) => l.color)).size === 3;
+const C_OK = (r) => r.case === 'C' && svcIds(r).includes('psychiatra') && svcIds(r).includes('psycholog_terapeuta');
+
+const ACCEPTANCE = [
+  [1, 'mam duszności i kołatanie serca', 'A', A_OK],
+  [2, 'nie mogę oddychać, kołatanie serca', 'A', A_OK],
+  [3, 'boli mnie w klatce piersiowej', 'A', A_OK],
+  [4, 'zemdlałem', 'A', A_OK],
+  [5, 'połknąłem za dużo tabletek', 'A', A_OK],
+  [6, 'chcę się zabić', 'B', (r) => B_OK(r) && r.text.includes('Nie jesteś z tym sam(a)')],
+  [7, 'nie mam po co żyć', 'B', B_OK],
+  [8, 'mój mąż mówi, że chce się zabić', 'B', (r) => B_OK(r) && r.text.includes('kogoś bliskiego')],
+  [9, 'tnę się', 'B', B_OK],
+  [10, 'mam depresję i chcę się zabić', 'B', B_OK],
+  [11, 'potrzebuję recepty, mam ból w klatce', 'A', A_OK],
+  [13, 'mam depresję', 'C', C_OK],
+  [14, 'ataki paniki i bezsenność', 'C', C_OK],
+  [15, 'potrzebuję leków psychiatrycznych', 'C', C_OK],
+  [16, 'boli mnie kręgosłup', 'D', D_OK],
+  [17, 'kregoslup mnie boli', 'D', D_OK],
+  [18, 'boli mnie noga', 'D', D_OK],
+  [19, 'jestem chory', 'D', D_OK],
+  [20, 'mam wysypkę na rękach', 'D', (r) => D_OK(r) && svcIds(r).includes('dermatologia')],
+  [21, 'chcę receptę', 'E', (r) => svcIds(r).join() === 'wizyta_umow,recepta,kontynuacja' && r.links[1].url.includes('service=e-Recepta+online')],
+  [22, 'potrzebuję L4', 'F', (r) => r.links.length === 2 && r.links[1].url.includes('service=L4+online') && !labels(r).includes('Cennik')],
+  [23, 'mam wyniki badań', 'G', (r) => svcIds(r).slice(0, 2).join() === 'wyniki,skierowanie'],
+  [24, 'nie robiłem badań, chcę skierowanie', 'G', (r) => svcIds(r).slice(0, 2).join() === 'wyniki,skierowanie'],
+  [25, 'tabletka dzień po', 'H', (r) => svcIds(r).join() === 'dzien_po,antykoncepcja,trt' && new Set(r.links.map((l) => l.color)).size === 3 && r.links.every((l) => !l.outline)],
+  [26, 'jaką dawkę ibuprofenu?', 'I', (r) => !/\d/.test(r.text) && labels(r)[0].startsWith('Umów konsultację lekarską')],
+  [27, 'ile kosztuje psychiatra', 'J', (r) => r.text.includes('259 zł') && r.text.includes('169 zł') && svcIds(r).join() === 'psychiatra,psycholog_terapeuta' && !labels(r).some((l) => l.includes('cennik'))],
+  [28, 'jak umówić wizytę', 'K', (r) => r.text.includes('1)') && r.text.includes('4)') && r.links.some((l) => l.ask === 'Jaki specjalista?')],
+  ['28b', 'Jaki specjalista?', 'K', (r) => svcIds(r).join() === 'lekarz,psychiatra,psycholog,terapeuta'],
+  [29, 'jaka jutro pogoda', 'L', L_OK],
+  [30, 'czy jutro jest dzień wolny', 'L', L_OK],
+  [31, 'asdfgh', 'L', L_OK],
+  [32, 'cześć', 'M', (r) => r.text.includes('Nie jestem lekarzem') && tiles(r).filter((l) => l.label.includes('zł')).length >= 12],
+  // Normalizacja wpisu (specyfikacja, pkt 8.5): literówki i powtórzenia liter.
+  ['8.5a', 'dermatolok', 'D', (r) => svcIds(r).includes('dermatologia')],
+  ['8.5b', 'potrzebuje zwolninie', 'F', () => true],
+  ['8.5c', 'boooli mnie kregoslup', 'D', D_OK],
+  ['8.5d', 'nie moge odychac', 'A', A_OK],
+];
+
+let accOk = 0;
+for (const [nr, msg, expCase, check] of ACCEPTANCE) {
+  const r = await respond(botEngine, msg, [], {});
+  const pass = r.case === expCase && check(r) && r.links.length > 0;
+  if (pass) accOk++;
+  else {
+    failed++;
+    console.log(`  ✗ [spec ${nr}] "${msg}" → ${r.case}/${r.intent} (oczekiwano: ${expCase})`, JSON.stringify({ text: r.text, links: r.links?.map((l) => `${l.id}:${l.label}`), alarm: r.alarm?.text }));
+  }
+}
+// 12: tryb kryzysowy — po B „nie wiem” dostaje odpowiedź B (góra) + czerwoną kartę (dół), nie „Nie jestem pewna…”.
+{
+  const flow = {};
+  setPanelConfig(sanitizeConfig({ safety: { crisisFollowup: 'all', crisisLimit: 0 } })); // zachowanie ze specyfikacji
+  await respond(botEngine, 'nie chcę żyć', [], flow);
+  const r = await respond(botEngine, 'nie wiem', [], flow);
+  setPanelConfig(sanitizeConfig({}));
+  const pass = r.case === 'B' && B_OK(r) && r.text.includes('Nie jesteś z tym sam(a)');
+  if (pass) accOk++;
+  else { failed++; console.log('  ✗ [spec 12] tryb kryzysowy', r); }
+}
+// „dzieci” to nie „dzięki” (tolerancja literówek wyłączona dla podziękowań).
+for (const [q, want] of [['czy przyjmujecie dzieci', 'inny_specjalista'], ['dzięki', 'podziekowanie'], ['ok dzięki', 'podziekowanie']]) {
+  const r = await respond(botEngine, q, [], {});
+  expect(`temat: ${q}`, r.intent === want, r.intent);
+}
+// Rozmowa testowa klientki (15.10): kontakt z człowiekiem, pytania o lekarzy, fałszywe alarmy, {imie}.
+for (const [q, want] of [
+  ['Czy moge się połączyć z przedtawicielem', 'kontakt'], ['Czy mogę się połączyć z kimś z obsługi', 'kontakt'],
+  ['Czy tu ktoś pracuje', 'kontakt'], ['Halo jest tu ktoś ?', 'kontakt'], ['Nie mogę się połączyć', 'kontakt'],
+  ['Ilu jest lekarzy', 'jaki_specjalista'], ['Czy są dostępni lekarze', 'jaki_specjalista'],
+  ['Nie mogę umówić wizyty', 'umow'], ['zatrudnienie dla lekarzy', 'dla_lekarzy'],
+]) {
+  const r = await respond(botEngine, q, [], {});
+  expect(`rozmowa klientki: ${q}`, r.intent === want, `${r.case}/${r.intent}`);
+}
+{
+  const r1 = await respond(botEngine, 'halo', [], { name: 'Anna' });
+  const r2 = await respond(botEngine, 'cześć', [], {});
+  expect('{imie} uzupełnione albo usunięte', r1.text.startsWith('Dzień dobry, Anna!') && r2.text.startsWith('Dzień dobry!') && !/\{imie\}/.test(r1.text + r2.text), [r1.text.slice(0, 30), r2.text.slice(0, 30)]);
+  const r3 = await respond(botEngine, 'nie mogę mówić, mam opadnięty kącik ust', [], {});
+  expect('udar nadal wykrywany', r3.case === 'A', r3.intent);
+}
+// Nowe frazy A: przedawkowanie narkotyków / dopalaczy.
+for (const q of ['wziąłem za dużo narkotyków', 'przećpałem', 'za dużo dopalaczy']) {
+  const r = await respond(botEngine, q, [], {});
+  expect(`A: ${q}`, r.case === 'A', r.intent);
+}
+// Panel: słowa alarmowe (dodanie, wyłączenie domyślnej, walidacja).
+{
+  const cfg = sanitizeConfig({ alarms: { A: { add: ['Ćpałem całą noc', '=Zażyłem*', 'x'], remove: ['zawal*', 'nie-ma-takiej'] }, Z: { add: ['a b'] } } });
+  expect('alarmy: walidacja', JSON.stringify(cfg.alarms) === JSON.stringify({ A: { add: ['cpalem cala noc', '=zazylem*'], remove: ['zawal*'] } }), cfg.alarms);
+  setPanelConfig(cfg);
+  let r = await respond(botEngine, 'ćpałem całą noc', [], {});
+  expect('alarmy: dodana fraza → A', r.case === 'A', r.intent);
+  r = await respond(botEngine, 'chyba mam zawał', [], {});
+  expect('alarmy: wyłączona fraza nie uruchamia A', r.case !== 'A', r.intent);
+  setPanelConfig(sanitizeConfig({ alarms: { B: { add: ['mam wszystkiego dosc'] } } }));
+  r = await respond(botEngine, 'mam wszystkiego dość', [], {});
+  expect('alarmy: dodana fraza → B', r.case === 'B', r.intent);
+  setPanelConfig(sanitizeConfig({}));
+  r = await respond(botEngine, 'chyba mam zawał', [], {});
+  expect('alarmy: domyślne wracają', r.case === 'A', r.intent);
+}
+// Eksport / import: każde pole ustawień przechodzi w obie strony bez strat.
+{
+  const full = {
+    logging: { level: 2, retentionDays: 30 },
+    safety: { supportLine: true, crisisFollowup: 'unclear', crisisLimit: 3, crisisEndOnTopic: false },
+    alarms: { A: { add: ['cpalem cala noc'], remove: ['zawal*'] } },
+    services: { recepta: { price: 'od 49 zł', color: '#123456' } }, buttons: { K: ['cennik'] },
+    site: { phone: '+48 111 222 333' }, pages: { contact: 'https://example.com/kontakt' },
+    keywords: { l4: { add: ['zwolnienie na dziecko'], remove: [] } }, topics: { zdrowie: { extras: ['cennik'] } },
+    notices: [{ id: 'n1', text: 'Test', from: '2026-12-24', to: '2026-12-26', active: true }],
+    tiles: { fit: true, centerH: true, singleFit: false, fontSize: 12, padding: { t: 3, r: 3, b: 3, l: 3 } },
+    rules: [{ id: 'r1', phrases: ['parking'], text: 'Parking jest.', active: true }],
+    overrides: { cennik: { text: 'Nowy cennik.' } },
+  };
+  const a = sanitizeConfig(full);
+  const b = unwrapSettings(JSON.parse(JSON.stringify(wrapSettings(a))));
+  expect('eksport/import: pełne ustawienia bez strat', JSON.stringify(a) === JSON.stringify(b));
+  const missing = SETTINGS_KEYS.filter((k) => !(k in full));
+  expect('eksport/import: test obejmuje każde pole ustawień (dopisz nowe pole do „full”)', missing.length === 0, missing);
+  const empty = SETTINGS_KEYS.filter((k) => JSON.stringify(a[k]) === JSON.stringify(sanitizeConfig({})[k]));
+  expect('eksport/import: każde pole w teście ma wartość inną niż domyślna', empty.length === 0, empty);
+  const unknown = SETTINGS_KEYS.filter((k) => { try { unwrapSettings({ [k]: a[k] }); return false; } catch { return true; } });
+  expect('eksport/import: plik z jednym dowolnym polem jest rozpoznany', unknown.length === 0, unknown);
+}
+// Panel: ustawienia trybu kryzysowego (safety.crisisFollowup / crisisLimit / crisisEndOnTopic).
+{
+  const cfg = sanitizeConfig({ safety: { crisisFollowup: 'xx', crisisLimit: 99, crisisEndOnTopic: 'tak' } });
+  expect('tryb kryzysowy: walidacja', cfg.safety.crisisFollowup === 'off' && cfg.safety.crisisLimit === 50 && cfg.safety.crisisEndOnTopic === true, cfg.safety);
+  const run = async (safety, msgs) => {
+    setPanelConfig(sanitizeConfig({ safety }));
+    const flow = {};
+    await respond(botEngine, 'nie chcę żyć', [], flow);
+    const out = [];
+    for (const m of msgs) out.push((await respond(botEngine, m, [], flow)).intent);
+    setPanelConfig(sanitizeConfig({}));
+    return out;
+  };
+  const d = sanitizeConfig({}).safety;
+  expect('tryb kryzysowy: domyślne (nigdy, 1 raz, konkretne pytanie kończy)', d.crisisFollowup === 'off' && d.crisisLimit === 1 && d.crisisEndOnTopic === true, d);
+  expect('tryb kryzysowy: 0 = bez limitu zostaje', sanitizeConfig({ safety: { crisisLimit: 0 } }).safety.crisisLimit === 0);
+  let o = await run({}, ['jaka jest pogoda', 'co polecacie na weekend', 'nie wiem']);
+  expect('tryb kryzysowy domyślnie: zwykłe odpowiedzi', o.every((x) => x !== 'crisis-followup'), o);
+  o = await run({ crisisFollowup: 'all', crisisLimit: 0, crisisEndOnTopic: false }, ['jaka jest pogoda', 'nie wiem']);
+  expect('tryb kryzysowy „niejasne i spoza tematu”: pogoda → B', o[0] === 'crisis-followup' && o[1] === 'crisis-followup', o);
+  o = await run({ crisisFollowup: 'unclear', crisisLimit: 0 }, ['jaka jest pogoda', 'nie wiem']);
+  expect('tryb kryzysowy „tylko niejasne”: pogoda → zwykła odpowiedź', o[0] === 'offtopic' && o[1] === 'crisis-followup', o);
+  o = await run({ crisisFollowup: 'off' }, ['nie wiem']);
+  expect('tryb kryzysowy wyłączony', o[0] !== 'crisis-followup', o);
+  o = await run({ crisisFollowup: 'all', crisisLimit: 1 }, ['nie wiem', 'nie wiem']);
+  expect('tryb kryzysowy: limit 1', o[0] === 'crisis-followup' && o[1] !== 'crisis-followup', o);
+  o = await run({ crisisFollowup: 'all', crisisLimit: 0, crisisEndOnTopic: true }, ['ile kosztuje e-recepta', 'nie wiem']);
+  expect('tryb kryzysowy: konkretne pytanie kończy', o[0] !== 'crisis-followup' && o[1] !== 'crisis-followup', o);
+}
+// 8.19: po dwóch niezrozumiałych wiadomościach z rzędu — „Napisz do nas”.
+{
+  const flow = {};
+  const r1 = await respond(botEngine, 'asdfgh', [], flow);
+  const r2 = await respond(botEngine, 'qwerty', [], flow);
+  const pass = !r1.links.some((l) => l.label === 'Napisz do nas') && r2.links.some((l) => l.label === 'Napisz do nas');
+  if (pass) accOk++;
+  else { failed++; console.log('  ✗ [spec 8.19] „Napisz do nas” po dwóch niezrozumiałych', r1.links, r2.links); }
+}
+console.log(`Testy akceptacyjne specyfikacji: ${accOk}/${ACCEPTANCE.length + 2}`);
+
+// Zasady nadrzędne (sekcja 3): każda odpowiedź tematu ma przycisk; teksty maks. 4 zdania;
+// czerwony kolor (alarm) wyłącznie przy 112.
+{
+  const { TEXTS } = await import('../chat/core/texts.js');
+  for (const i of INTENTS) {
+    const a = i.answer;
+    if (!a.links.length) { failed++; console.log(`  ✗ temat ${i.id} bez przycisku`); }
+    // Wytyczna klienta: każda odpowiedź prowadzi do zakupu — co najmniej jeden kafelek usługi.
+    if (!a.links.some((l) => l.tile && l.url?.includes('wypelnij-formularz'))) { failed++; console.log(`  ✗ temat ${i.id} bez kafelka zakupu`); }
+    if (a.links.some((l) => l.kind === 'alarm' || /^#c0392b$/i.test(l.color || ''))) { failed++; console.log(`  ✗ temat ${i.id} ma czerwony przycisk`); }
+    // Specyfikacja v1.1: sąsiednie kafelki nie mają tego samego koloru (chyba że jeden to obrys).
+    const t = a.links.filter((l) => l.tile);
+    for (let k = 1; k < t.length; k++) {
+      if (t[k].color === t[k - 1].color && !t[k].outline && !t[k - 1].outline) { failed++; console.log(`  ✗ temat ${i.id}: sąsiednie kafelki w tym samym kolorze (${t[k - 1].label} / ${t[k].label})`); }
+    }
+  }
+  for (const [k, t] of Object.entries(TEXTS)) {
+    // Krótkie wtrącenia („Jaki specjalista?”) nie liczą się jako zdanie.
+    const sentences = t.text.split(/[.!?](?:\s|$)/).filter((x) => x.trim().split(/\s+/).length > 3).length;
+    if (sentences > 4) { failed++; console.log(`  ✗ tekst ${k} ma ${sentences} zdań (maks. 4)`); }
+  }
+}
+
+// =============================================================================
+// Panel sterowania
+// =============================================================================
+
+function expect(label, cond, detail = '') {
+  if (cond) return true;
+  failed++;
+  console.log(`  ✗ [panel] ${label}${detail ? ` — ${JSON.stringify(detail)}` : ''}`);
+  return false;
+}
+let panelOk = failed;
+
+// Własne odpowiedzi, nadpisania, bezpieczeństwo ponad wszystkim.
+setPanelConfig({
+  rules: [
+    { id: 'sob', phrases: ['sobot*', 'w weekend'], text: 'W soboty 9–18.', links: [{ label: 'Zły', url: 'javascript:alert(1)' }] },
+    { id: 'off', phrases: ['parking'], text: 'Parking jest.', active: false },
+  ],
+  overrides: { D: { text: 'Skóra → dermatolog.' }, L: { text: 'Nie wiem.' }, ALARM: { text: 'zmienione' } },
+});
+r = await respond(botEngine, 'Czy pracujecie w SOBOTĘ?');
+expect('reguła z frazą sobot* działa', r.intent === 'custom:sob' && r.source === 'custom', r);
+expect('niebezpieczny link usunięty', r.links.length === 0, r.links);
+expect('wyłączona reguła nie działa', !matchRule('gdzie jest parking'));
+r = await respond(botEngine, 'boli mnie w klatce piersiowej w sobotę');
+expect('stan nagły wygrywa z własną regułą', r.intent === 'emergency' && r.source === 'safety', r);
+r = await respond(botEngine, 'mam wysypkę');
+expect('nadpisanie tekstu działa (bot)', r.text === 'Skóra → dermatolog.', r.text);
+r = await respond(botEngine, 'nie mogę oddychać');
+expect('tekstu alarmowego nie da się nadpisać', r.alarm?.text.startsWith('To może być stan nagły'), r.alarm);
+r = await respond(botEngine, 'qwerty zxcv');
+expect('nadpisanie „nie rozpoznano” działa', r.intent === 'fallback' && r.text === 'Nie wiem.', r);
+// Usługi i przyciski z panelu: cena, kolor i kolejność przycisków bez programisty.
+setPanelConfig({ services: { psychiatra: { price: '299 zł', color: '#123456', priceColor: '#FFFFFF' }, nieznana: { price: '1 zł' } }, buttons: { F: ['l4', 'xxx', 'cennik|Ceny'], ALARM: ['cennik'] } });
+r = await respond(botEngine, 'ile kosztuje psychiatra');
+expect('panel: nowa cena i kolor usługi', r.text.includes('299 zł') && r.links[0].color === '#123456' && r.links[0].priceColor === '#FFFFFF' && r.links[0].label.endsWith('299 zł'), r);
+r = await respond(botEngine, 'potrzebuję L4');
+expect('panel: własne przyciski (nieznane id odrzucone, własna etykieta)', r.links.map((l) => l.label).join() === 'L4 online · od 79 zł,Ceny', r.links);
+expect('panel: tylko znane usługi i przyciski', !sanitizeConfig({ services: { nieznana: { price: '1' } }, buttons: { ALARM: ['cennik'], J: ['l4'] } }).services.nieznana && !Object.keys(sanitizeConfig({ buttons: { ALARM: ['cennik'], J: ['l4'] } }).buttons).length);
+expect('panel: kolor tylko #rrggbb', !sanitizeConfig({ services: { l4: { color: 'red;background:url(x)' } } }).services.l4);
+expect('panel: kafelki — domyślnie bez zmian', JSON.stringify(sanitizeConfig({}).tiles) === '{}');
+{
+  const tl = sanitizeConfig({ tiles: { fit: true, nobreak: true, sym: 'both', padding: { t: 4, r: 99, b: 20, l: -3 } } }).tiles;
+  expect('panel: kafelki — symetria pełna i zakres 0–24 px', tl.fit && tl.nobreak && tl.padding.t === 4 && tl.padding.b === 4 && tl.padding.l === 4 && tl.padding.r === 4, tl);
+  const tp = sanitizeConfig({ tiles: { pack: true, autoWidth: true, fit: 'tak' } }).tiles;
+  expect('panel: kafelki — równe odstępy i szerokość do tekstu (tylko true)', tp.pack && tp.autoWidth && !tp.fit, tp);
+  const { orderTiles } = await import('../chat/core/knowledge.js');
+  const ts = [{ label: 'A · od 79 zł' }, { label: 'B' }, { label: 'C · 259 zł' }, { label: 'D · od 45 zł' }];
+  expect('kafelki: kolejność od najtańszej (bez ceny na końcu)', orderTiles(ts, 'cheap').map((x) => x.label[0]).join('') === 'DACB');
+  expect('kafelki: od najdroższej / najpierw z ceną / domyślna', orderTiles(ts, 'expensive').map((x) => x.label[0]).join('') === 'CADB' && orderTiles(ts, 'priced').map((x) => x.label[0]).join('') === 'ACDB' && orderTiles(ts, 'default') === ts);
+  expect('kafelki: zła kolejność odrzucona', !sanitizeConfig({ tiles: { order: 'xxx' } }).tiles.order && sanitizeConfig({ tiles: { order: 'cheap' } }).tiles.order === 'cheap');
+  const tf = sanitizeConfig({ tiles: { center: true, fontSize: 99 } }).tiles;
+  const th = sanitizeConfig({ tiles: { centerH: true } }).tiles;
+  expect('panel: kafelki — wyśrodkowanie w poziomie i w pionie osobno', th.centerH && !th.centerV, th);
+  expect('panel: kafelki — pojedynczy kafelek dopasowany domyślnie (zapis tylko wyłączenia)', !('singleFit' in sanitizeConfig({ tiles: { singleFit: true } }).tiles) && sanitizeConfig({ tiles: { singleFit: false } }).tiles.singleFit === false);
+  expect('panel: kafelki — wyśrodkowanie (stare „center” = oba) i czcionka (10–20 px)', tf.centerH && tf.centerV && tf.fontSize === 20 && sanitizeConfig({ tiles: { fontSize: 11.3 } }).tiles.fontSize === 11.5 && !('fontSize' in sanitizeConfig({ tiles: { fontSize: 13.5 } }).tiles), tf);
+  const tv = sanitizeConfig({ tiles: { sym: 'vertical', padding: { t: 6, b: 18, l: 2, r: 30 } } }).tiles;
+  expect('panel: kafelki — symetria pionowa (dół = góra)', tv.padding.b === 6 && tv.padding.l === 2 && tv.padding.r === 24, tv);
+}
+expect('panel: kolor plakietki z ceną (auto albo #rrggbb)', sanitizeConfig({ services: { l4: { priceColor: '#fff4d6' } } }).services.l4.priceColor === '#FFF4D6' && !sanitizeConfig({ services: { l4: { priceColor: 'auto' } } }).services.l4);
+// Strona i wygląd, adresy zakładek, słowa kluczowe, przyciski dodatkowe, komunikaty — z panelu.
+{
+  const { SITE, PAGES, activeNotices } = await import('../chat/core/knowledge.js');
+  setPanelConfig({
+    site: { phone: '+48 600 100 200', hours: 'pon–pt 7:00–21:00', assistant: 'Ola', email: 'zly-adres' },
+    pages: { pricing: 'https://lekarzeiterapeuci.pl/cennik', terms: 'javascript:alert(1)' },
+    keywords: { inny_specjalista: { add: ['rw* kulszow*'] }, skora: { remove: ['wysypk*'] } },
+    topics: { inny_specjalista: { extras: ['dermatologia'] }, l4: { extras: ['trt'] } },
+    notices: [{ text: 'Teraz', from: '2000-01-01', to: '2999-12-31' }, { text: 'Kiedyś', from: '2999-01-01' }, { text: 'Wyłączony', active: false }],
+  });
+  r = await respond(botEngine, 'numer telefonu');
+  expect('panel: nowy telefon i godziny w odpowiedzi', r.text.includes('+48 600 100 200') && r.text.includes('7:00–21:00') && SITE.phoneHref === 'tel:+48600100200', r.text);
+  expect('panel: imię konsultantki, zły e-mail odrzucony', SITE.assistant === 'Ola' && SITE.email === 'kontakt@lekarzeiterapeuci.pl');
+  expect('panel: adres zakładki (tylko https)', PAGES.pricing.url === 'https://lekarzeiterapeuci.pl/cennik' && PAGES.terms.url.endsWith('/warunki-umowy'));
+  r = await respond(botEngine, 'mam rwę kulszową');
+  expect('panel: dodane słowo z gwiazdkami („rw* kulszow*”) + przycisk dodatkowy', r.intent === 'inny_specjalista' && r.links.some((l) => l.id === 'dermatologia'), r);
+  r = await respond(botEngine, 'mam wysypkę');
+  expect('panel: usunięte słowo przestaje działać', r.intent !== 'skora', r.intent);
+  expect('panel: przyciski dodatkowe tylko dla C i D', !sanitizeConfig({ topics: { l4: { extras: ['trt'] } } }).topics.l4);
+  expect('panel: komunikaty tylko w swoim terminie', activeNotices().map((n) => n.text).join() === 'Teraz', activeNotices());
+  const { siteFacts } = await import('../chat/core/knowledge.js');
+  expect('kontrola strony sprawdza nowy telefon i godziny', siteFacts().some((f) => f.pattern.startsWith('600')) && siteFacts().some((f) => f.label.includes('7:00–21:00')));
+  expect('panel: obraz tylko PNG/JPEG/WebP', !sanitizeConfig({ site: { logo: 'data:image/svg+xml;base64,PHN2Zz4=' } }).site.logo && sanitizeConfig({ site: { logo: 'data:image/png;base64,iVBORw0KGgo=' } }).site.logo);
+  setPanelConfig(DEFAULT_CONFIG);
+  expect('panel: powrót do wartości domyślnych', SITE.phone === '+48 881 238 227' && SITE.assistant === 'Ilona' && PAGES.pricing.url.endsWith('/#cennik') && !activeNotices().length);
+}
+setPanelConfig(DEFAULT_CONFIG);
+r = await respond(botEngine, 'mam wysypkę');
+expect('powrót do tekstu domyślnego', !r.text.startsWith('Skóra →'), r.text);
+
+// Rejestracja i anonimizacja.
+expect('anonimizacja', anonymize('PESEL 90010112345, tel. +48 600-123-456, a@b.pl') === 'PESEL [numer], tel. [numer], [e-mail]', anonymize('PESEL 90010112345, tel. +48 600-123-456, a@b.pl'));
+const entry = { intent: 'skora', consent: true, question: 'pytanie 600123456', answer: 'odp' };
+expect('poziom 0: nic', filterLogEntry(entry, { logging: { level: 0 } }) === null);
+expect('poziom 1: bez treści', filterLogEntry(entry, { logging: { level: 1 } }).question === null);
+expect('poziom 2 bez zgody: bez treści', filterLogEntry({ ...entry, consent: false }, { logging: { level: 2 } }).question === null);
+expect('kryzys (B): treści nie zapisujemy', filterLogEntry({ ...entry, case: 'B' }, { logging: { level: 3 } }).question === null);
+expect('rejestr: przypadek i przycisk', filterLogEntry({ ...entry, case: 'D', button: 'Umów' }, { logging: { level: 1 } }).case === 'D');
+expect('rejestr: zły przypadek odrzucony', filterLogEntry({ ...entry, case: 'Z' }, { logging: { level: 1 } }).case === '');
+const l2 = filterLogEntry(entry, { logging: { level: 2 } });
+expect('poziom 2 ze zgodą: pytanie bez numeru, bez odpowiedzi', l2.question === 'pytanie [numer]' && l2.answer === null, l2);
+expect('poziom 3 ze zgodą: z odpowiedzią', filterLogEntry(entry, { logging: { level: 3 } }).answer === 'odp');
+
+// Serwer panelu na wbudowanym SQLite (atrapa Cloudflare D1).
+let sqliteOk = true;
+try {
+  await import('node:sqlite');
+} catch {
+  sqliteOk = false;
+  console.log('  (pominięto testy serwera panelu — Node bez node:sqlite, wymagany Node 22.13+)');
+}
+if (sqliteOk) {
+  const worker = (await import('../panel/server/worker.js')).default;
+  const { createTestD1 } = await import('./d1-sqlite.js');
+  const env = { DB: await createTestD1(), ADMIN_PASSWORD: 'tajne', ALLOWED_ORIGINS: 'https://lekarzeiterapeuci.pl' };
+  const call = async (method, path, { body, pw, origin = 'https://lekarzeiterapeuci.pl', ip = '1.1.1.1' } = {}) => {
+    const headers = { Origin: origin, 'CF-Connecting-IP': ip };
+    if (pw) headers.Authorization = `Bearer ${pw}`;
+    const res = await worker.fetch(new Request(`https://panel${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined }), env);
+    let data = null;
+    try {
+      data = await res.json();
+    } catch { /* brak treści */ }
+    return { status: res.status, data };
+  };
+  expect('serwer: domyślne ustawienia', (await call('GET', '/config')).data.logging.level === 0);
+  expect('serwer: admin bez hasła = 401', (await call('GET', '/admin/config')).status === 401);
+  expect('serwer: złe hasło = 401', (await call('GET', '/admin/config', { pw: 'zle' })).status === 401);
+  const put = await call('PUT', '/admin/config', { pw: 'tajne', body: { logging: { level: 2 }, rules: [{ phrases: ['x'], text: 'y', active: false }] } });
+  expect('serwer: zapis ustawień', put.status === 200 && put.data.logging.level === 2 && put.data.rules.length === 1, put);
+  expect('serwer: wyłączone reguły niepubliczne', (await call('GET', '/config')).data.rules.length === 0);
+  expect('serwer: zapis rozmowy', (await call('POST', '/log', { body: { intent: 'skora', consent: true, question: 'tel 600123456' } })).status === 204);
+  expect('serwer: obca strona nie zapisze', (await call('POST', '/log', { origin: 'https://zla.pl', body: { intent: 'x' } })).status === 403);
+  const logs = (await call('GET', '/admin/logs', { pw: 'tajne' })).data.logs;
+  expect('serwer: rozmowa zanonimizowana', logs.length === 1 && logs[0].question === 'tel [numer]', logs);
+  env.ADMIN_IPS = '9.9.9.9';
+  expect('serwer: admin spoza dozwolonych IP = 404', (await call('GET', '/admin/config', { pw: 'tajne' })).status === 404);
+  env.ADMIN_IPS = '';
+  for (let i = 0; i < 11; i++) await call('GET', '/admin/config', { pw: 'zle', ip: '2.2.2.2' });
+  expect('serwer: blokada po 10 błędnych hasłach', (await call('GET', '/admin/config', { pw: 'tajne', ip: '2.2.2.2' })).status === 429);
+  env.DB._raw.prepare('UPDATE logs SET ts = ?').run(Date.now() - 400 * 86400000);
+  await worker.scheduled({}, { ...env, DB: env.DB }, { waitUntil: () => {} });
+  expect('serwer: stare wpisy usuwane automatycznie', (await call('GET', '/admin/logs', { pw: 'tajne', ip: '3.3.3.3' })).data.logs.length === 0);
+}
+
+// Kontrola strony na atrapie strony kliniki.
+const goodHome = `<html><head><title>Lekarze i Terapeuci</title></head><body>
+  <section id="uslugi">Usługi</section><section id="cennik">Recepta 59 zł, L4 79 zł, otyłość 129 zł, psycholog 169 zł, psychiatra 259 zł</section>
+  <section id="kontakt">Tel. +48 881 238 227, kontakt@lekarzeiterapeuci.pl, Pon–Pt: 8:00–20:00, Sb–Nd: 9:00–18:00</section>
+  ${'<p>Treść strony głównej. </p>'.repeat(40)}</body></html>`;
+const womenPage = `<html><body>Tabletka dzień po od 45 zł, TRT od 199 zł ${'<p>tekst</p>'.repeat(80)}</body></html>`;
+const fakeFetch = (variant) => async (url) => {
+  const u = new URL(url);
+  const html = (body) => new Response(body, { status: 200, headers: { 'content-type': 'text/html' } });
+  if (u.pathname === '/') return html(variant === 'changed' ? goodHome.replace('259 zł', '279 zł').replace('id="cennik"', 'id="ceny"') : goodHome);
+  if (u.pathname === '/dla-kobiet-i-mezczyzn') return html(womenPage);
+  if (u.pathname === '/conditions/migrena' && variant === 'changed') return new Response('Not found', { status: 404, headers: { 'content-type': 'text/html' } });
+  return html(`<html><body>${'<p>Podstrona.</p>'.repeat(60)}</body></html>`);
+};
+const links = collectLinks({ rules: [{ phrases: ['x'], text: 'y', links: [{ label: 'Kontakt', url: 'https://lekarzeiterapeuci.pl/#kontakt' }] }] });
+expect('kontrola: zbiera linki z odpowiedzi i reguł', links.length > 20 && links.find((l) => l.url.endsWith('/#kontakt')).where.some((w) => w.startsWith('Własna')), links.length);
+const first = await checkSite({ fetchImpl: fakeFetch('good') });
+expect('kontrola: wszystko OK na dobrej stronie', first.ok && first.summary.errors === 0 && first.summary.factsMissing === 0, first.summary);
+expect('kontrola: wszystkie fakty sprawdzone', first.facts.length === siteFacts().length && first.facts.every((f) => f.state === 'ok'), first.facts);
+const second = await checkSite({ fetchImpl: fakeFetch('changed'), previous: first });
+expect('kontrola: wykrywa link 404', second.links.some((l) => l.url.includes('/conditions/migrena') && l.level === 'error'), second.summary);
+expect('kontrola: wykrywa brak sekcji #cennik', second.links.some((l) => l.url.endsWith('#cennik') && l.level === 'warn'));
+expect('kontrola: wykrywa zmianę ceny', second.facts.find((f) => f.label.includes('259')).state === 'missing');
+expect('kontrola: wykrywa zmianę treści', second.changes.some((c) => c.url === 'https://lekarzeiterapeuci.pl/'), second.changes);
+expect('kontrola: wynik „wymaga uwagi”', second.ok === false);
+const down = await checkSite({ fetchImpl: async () => { throw new TypeError('fetch failed'); } });
+expect('kontrola: brak połączenia = jeden czytelny komunikat', down.summary.unreachable === true && down.ok === false, down.summary);
+
+// Plik ustawień: eksport / import / źródło „plik”.
+const exported = wrapSettings({ logging: { level: 1 }, rules: [{ phrases: ['parking'], text: 'Online.' }] });
+expect('plik: eksport → import daje te same ustawienia', JSON.stringify(unwrapSettings(JSON.parse(JSON.stringify(exported)))) === JSON.stringify(exported.config));
+expect('plik: import „gołych” ustawień', unwrapSettings({ logging: { level: 3 } }).logging.level === 3);
+let importErr = '';
+try {
+  unwrapSettings({ cokolwiek: 1 });
+} catch (err) {
+  importErr = err.message;
+}
+expect('plik: odrzuca plik, który nie jest ustawieniami', importErr.includes('nie zawiera ustawień'));
+const repoFile = JSON.parse(readFileSync(new URL('../settings.json', import.meta.url), 'utf8'));
+expect('plik: settings.json jest poprawny', unwrapSettings(repoFile).logging.level >= 0);
+
+// Czat czyta ustawienia z pliku, gdy nie ma serwera panelu.
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url) => (String(url).endsWith('settings.json') ? new Response(JSON.stringify(exported)) : new Response('', { status: 404 }));
+await initPanel({});
+expect('plik: czat używa ustawień z pliku', panelStatus().source === 'file' && getPanelConfig().logging.level === 1, panelStatus());
+await initPanel({ endpoint: 'https://serwer-panelu.invalid' });
+expect('plik: serwer panelu nie odpowiada → zapasowo plik', panelStatus().source === 'file' && getPanelConfig().logging.level === 1, panelStatus());
+globalThis.fetch = async () => new Response('', { status: 404 });
+await initPanel({});
+expect('plik: brak pliku = ustawienia domyślne', panelStatus().source === 'default' && getPanelConfig().logging.level === 0);
+globalThis.fetch = realFetch;
+setPanelConfig(DEFAULT_CONFIG);
+
+// Lokalny serwer panelu: zapis pliku ustawień z kopią zapasową i ochrona przed innymi stronami.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'lt-panel-'));
+  const settingsFile = join(dir, 'settings.json');
+  writeFileSync(settingsFile, JSON.stringify(wrapSettings(DEFAULT_CONFIG)));
+  const port = 5100 + Math.floor(Math.random() * 800);
+  const child = spawn(process.execPath, [new URL('./serve-local.js', import.meta.url).pathname, String(port)], {
+    env: { ...process.env, LT_SETTINGS_FILE: settingsFile, LT_BACKUP_DIR: join(dir, 'backups') },
+    stdio: 'ignore',
+  });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let i = 0; i < 40; i++) {
+      if (await realFetch(`${base}/`).then(() => true, () => false)) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const put = (origin, body) =>
+      realFetch(`${base}/api/settings`, { method: 'PUT', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    expect('lokalny serwer: obca strona nie zapisze pliku', (await put('https://zla.pl', exported)).status === 403);
+    const ok = await put(`http://127.0.0.1:${port}`, exported);
+    expect('lokalny serwer: zapis pliku ustawień', ok.status === 200);
+    const saved = JSON.parse(readFileSync(settingsFile, 'utf8'));
+    expect('lokalny serwer: plik ma nowe ustawienia', unwrapSettings(saved).rules[0]?.text === 'Online.', saved);
+    expect('lokalny serwer: kopia zapasowa poprzedniej wersji', readdirSync(join(dir, 'backups')).length === 1);
+    expect('lokalny serwer: błędny plik odrzucony', (await put(`http://127.0.0.1:${port}`, { x: 1 })).status === 400);
+  } finally {
+    child.kill();
+  }
+}
+
+if (failed === panelOk) console.log('panel, serwer panelu, kontrola strony, plik ustawień: OK');
+
+if (failed) {
+  console.log(`\nBŁĘDY: ${failed}`);
+  process.exit(1);
+}
+console.log('\nWszystkie testy przeszły.');

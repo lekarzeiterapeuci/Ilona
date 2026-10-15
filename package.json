@@ -1,0 +1,17 @@
+{
+  "name": "ilona",
+  "private": true,
+  "type": "module",
+  "description": "Czat „Ilona” — wirtualna konsultantka serwisu lekarzeiterapeuci.pl (bot regułowy + panel administracyjny)",
+  "scripts": {
+    "test": "node --no-warnings tools/test.js",
+    "check": "node tools/check-version.js",
+    "bump": "node tools/bump.js",
+    "panel": "node tools/serve-local.js",
+    "serve": "node tools/serve-local.js",
+    "check-site": "node tools/check-site.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

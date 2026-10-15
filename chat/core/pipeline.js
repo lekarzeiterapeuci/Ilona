@@ -1,0 +1,99 @@
+// Wspólna ścieżka obsługi pytania, używana przez widżet i testy (specyfikacja, sekcja 9):
+//   1. czyszczenie tekstu
+//   2. A / B — stan nagły / kryzys (chat/core/safety.js) — zawsze pierwsze, na każdej wiadomości,
+//      nie da się ich wyłączyć z panelu
+//   3. tryb kryzysowy sesji — po B wiadomości bez konkretnej intencji dostają ponownie komunikat B
+//      (co dokładnie, ile razy i kiedy się kończy — ustawienia z panelu, funkcja crisisFollowup)
+//   4. własne odpowiedzi na frazy z panelu sterowania
+//   5. engine.ask() — silnik bota (chat/engine/bot-engine.js); kolejność przypadków C–L w silniku
+//   6. po dwóch niezrozumiałych wiadomościach z rzędu — przycisk „Napisz do nas”
+// Każda odpowiedź ma { text, links, chips, intent, case, source }; przy A i B dodatkowo `alarm` —
+// czerwona karta z 112, którą widżet pokazuje ZAWSZE POD odpowiedzią (specyfikacja v1.1).
+//
+// session — mały obiekt stanu rozmowy przechowywany przez widżet ({ crisis, unclear });
+// pipeline go aktualizuje. Nie zawiera treści ani danych osobowych.
+import { checkSafety, cleanInput } from './safety.js';
+import { FALLBACK_REPLY, alarmReply, PAGES } from './knowledge.js';
+import { UI_TEXTS } from './texts.js';
+import { matchRule, getPanelConfig } from '../settings/client.js';
+import { DEFAULT_SAFETY } from '../settings/schema.js';
+
+// Odpowiedź „nie rozpoznano” (przypadek L): niejasne pytanie albo poza tematem.
+const UNCLEAR = (r) => r.case === 'L' || r.intent === 'fallback' || r.intent === 'offtopic';
+
+export async function respond(engine, rawMessage, history = [], session = {}) {
+  const reply = await respondInner(engine, rawMessage, history, session);
+  // {imie} w tekście (np. powitanie M po „halo” w trakcie rozmowy) — imię z ekranu powitalnego
+  // (session.name, ustawia widżet) albo nic. Nigdy nie zostawiamy znacznika w odpowiedzi.
+  if (reply?.text?.includes('{imie}')) {
+    const name = String(session.name || '').trim();
+    return { ...reply, text: reply.text.replaceAll('{imie}', name ? `, ${name}` : '') };
+  }
+  return reply;
+}
+
+async function respondInner(engine, rawMessage, history, session) {
+  const message = cleanInput(rawMessage);
+  if (!message) return { ...FALLBACK_REPLY, intent: 'empty', source: 'engine' };
+
+  const urgent = checkSafety(message, { supportLine: getPanelConfig().safety?.supportLine });
+  if (urgent) {
+    if (urgent.case === 'B') { session.crisis = true; session.crisisRepeats = 0; }
+    session.unclear = 0;
+    return { ...urgent, source: 'safety' };
+  }
+
+  const custom = matchRule(message);
+  if (custom) {
+    session.unclear = 0;
+    return { case: 'custom', ...custom };
+  }
+
+  let reply;
+  try {
+    reply = await engine.ask(message, history);
+    reply = { links: [], chips: [], source: 'engine', engine: engine.name, engineVersion: engine.version, ...reply };
+  } catch (err) {
+    // Nigdy nie zostawiamy pacjenta bez odpowiedzi.
+    console.error(`[${engine.name}] error:`, err);
+    reply = { ...FALLBACK_REPLY, intent: 'error', source: 'engine' };
+  }
+
+  if (session.crisis && crisisFollowup(reply, session)) {
+    return { ...alarmReply('B', { supportLine: getPanelConfig().safety?.supportLine }), intent: 'crisis-followup', source: 'safety' };
+  }
+
+  if (UNCLEAR(reply)) {
+    session.unclear = (session.unclear || 0) + 1;
+    // Po dwóch niezrozumiałych wiadomościach z rzędu — przekazanie do człowieka.
+    if (session.unclear >= 2 && !reply.links.some((l) => l.label === UI_TEXTS.writeToUs)) {
+      reply = { ...reply, links: [...reply.links, { label: UI_TEXTS.writeToUs, url: PAGES.contact.url, kind: 'info' }] };
+    }
+  } else {
+    session.unclear = 0;
+  }
+  return reply;
+}
+
+// Tryb kryzysowy (po B): czy zamiast tej odpowiedzi pokazać ponownie B (góra) + czerwoną kartę (dół)?
+// Ustawienia z panelu (zakładka „Bezpieczeństwo”, safety):
+//   crisisFollowup  'all' — niejasne i spoza tematu (jak w specyfikacji, sekcja 11),
+//                   'unclear' — tylko niejasne („nie wiem”); pytanie spoza tematu dostaje zwykłą odpowiedź,
+//                   'off' — tryb wyłączony (domyślnie),
+//   crisisLimit     ile razy powtórzyć B; 0 = do końca rozmowy (domyślnie 1),
+//   crisisEndOnTopic  konkretne pytanie (np. o receptę) kończy tryb kryzysowy (domyślnie tak).
+// Wartości domyślne: DEFAULT_SAFETY w chat/settings/schema.js.
+function crisisFollowup(reply, session) {
+  const cfg = { ...DEFAULT_SAFETY, ...(getPanelConfig().safety || {}) };
+  const mode = cfg.crisisFollowup;
+  if (mode === 'off') { session.crisis = false; return false; }
+  if (!UNCLEAR(reply)) {
+    if (cfg.crisisEndOnTopic) session.crisis = false;
+    return false;
+  }
+  if (mode === 'unclear' && reply.intent === 'offtopic') return false;
+  const limit = Number(cfg.crisisLimit) || 0; // 0 = bez limitu
+  if (limit > 0 && (session.crisisRepeats || 0) >= limit) { session.crisis = false; return false; }
+  session.crisisRepeats = (session.crisisRepeats || 0) + 1;
+  return true;
+}

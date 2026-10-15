@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Panel sterowania — Lekarze i Terapeuci</title>
+  <link rel="icon" href="../chat/img/avatar.png">
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <!-- Ekran połączenia -->
+  <section id="login" class="login" hidden>
+    <div class="login-card">
+      <div class="login-brand">
+        <img src="../chat/img/avatar.png" alt="">
+        <div>
+          <h1>Panel sterowania</h1>
+          <p>Asystentka Ilona · Lekarze i Terapeuci</p>
+        </div>
+      </div>
+
+      <div id="public-note" class="notice warn" hidden>
+        <strong>Podgląd demonstracyjny.</strong> Na publicznej stronie panel działa tylko w trybie demo — zmiany zostają w Twojej przeglądarce i widać je w czatach na tej stronie. Prawdziwy panel (serwer, zapis do pliku) uruchamiasz na swoim komputerze: <code>npm run panel</code>.
+      </div>
+
+      <form id="login-remote" class="stack">
+        <h2>Serwer panelu</h2>
+        <label class="field">
+          <span>Adres serwera <span class="tip" tabindex="0" data-tip="Adres Workera panelu — pojawia się po poleceniu „npx wrangler deploy” w folderze panel/server (instrukcja: docs/ADMINISTRATOR.md).">?</span></span>
+          <input id="login-endpoint" type="url" placeholder="https://lekarze-panel.twoje-konto.workers.dev" required autocomplete="url">
+        </label>
+        <label class="field">
+          <span>Hasło <span class="tip" tabindex="0" data-tip="Hasło ustawione poleceniem „npx wrangler secret put ADMIN_PASSWORD”. Panel pamięta je tylko do zamknięcia karty.">?</span></span>
+          <input id="login-password" type="password" required autocomplete="current-password">
+        </label>
+        <p id="login-error" class="error" hidden></p>
+        <button class="btn primary" type="submit">Połącz</button>
+      </form>
+
+      <div class="divider" id="file-divider"><span>albo</span></div>
+
+      <div class="stack" id="login-file-box">
+        <h2>Plik ustawień <span class="tip" tabindex="0" data-tip="Ustawienia w pliku settings.json obok skryptów czatu. Bez serwera i bazy: po zmianie wgrywasz ten jeden plik na hosting. Rozmowy nie są wtedy zapisywane.">?</span></h2>
+        <p class="muted" id="file-desc">Ustawienia zapisywane w pliku <code>settings.json</code>.</p>
+        <button id="login-file" class="btn" type="button">Otwórz plik ustawień</button>
+      </div>
+
+      <div class="divider"><span>albo</span></div>
+
+      <div class="stack">
+        <h2>Tryb lokalny (demo) <span class="tip" tabindex="0" data-tip="Do testów bez serwera. Zmiany widzą tylko czaty otwarte w tej przeglądarce z tego samego adresu (localhost).">?</span></h2>
+        <p class="muted">Ustawienia i rozmowy zapisują się tylko w tej przeglądarce i działają dla czatów otwartych z <code id="local-origin"></code> — np. strony porównania. Dobre do testów bez serwera.</p>
+        <button id="login-local" class="btn" type="button">Otwórz w trybie lokalnym</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Panel -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <img src="../chat/img/avatar.png" alt="">
+        <div>
+          <strong>Panel sterowania</strong>
+          <span id="conn" class="conn"></span>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="dev-reset" class="btn ghost dev-reset" type="button" title="Narzędzie deweloperskie: czyści pamięć przeglądarki (historie czatów, rozmowy z trybu lokalnego, preferencje panelu) i przywraca ustawienia domyślne. Logowanie zostaje.">Dev reset</button>
+        <button id="preview-toggle" class="btn ghost" type="button" aria-pressed="true" title="Pokazuje / ukrywa podgląd czatu z prawej strony. Podgląd używa bieżących — także niezapisanych — ustawień.">Podgląd czatu</button>
+        <span id="dirty" class="dirty" hidden>Niezapisane zmiany</span>
+        <button id="export" class="btn ghost" type="button" title="Pobiera plik z bieżącymi ustawieniami (także niezapisanymi). Możesz go zaimportować później albo wgrać na hosting jako settings.json.">Eksport</button>
+        <button id="import" class="btn ghost" type="button" title="Wczytuje ustawienia z pliku (z eksportu albo settings.json). Przed zapisem możesz je sprawdzić — nic nie zmienia się, dopóki nie klikniesz „Zapisz zmiany”.">Import</button>
+        <input id="import-file" type="file" accept=".json,application/json" hidden>
+        <button id="discard" class="btn ghost" type="button" hidden title="Odrzuca niezapisane zmiany i wraca do ostatnio zapisanych ustawień.">Cofnij</button>
+        <button id="save" class="btn primary" type="button" disabled title="Zapisuje wszystkie zakładki naraz. Na stronie kliniki zmiany pojawią się w ciągu ok. minuty.">Zapisz zmiany</button>
+        <a class="btn ghost" href="../index.html" target="_blank" rel="noopener" title="Otwiera stronę testową czatu (w trybie lokalnym widać tam zapisane ustawienia).">Strona testowa ↗</a>
+        <button id="logout" class="btn ghost" type="button">Wyloguj</button>
+      </div>
+    </header>
+
+    <!-- Zakładki w grupach (kolor grupy: --g). Kolejność: działanie → odpowiedzi → wygląd → analiza. -->
+    <nav class="tabs" role="tablist">
+      <div class="tab-group g-act" role="presentation">
+        <span class="tab-group-label">Działanie</span>
+        <div class="tab-group-tabs" role="presentation">
+          <button role="tab" data-tab="mode" aria-selected="true">Bezpieczeństwo</button>
+          <button role="tab" data-tab="logging">Rejestracja rozmów</button>
+        </div>
+      </div>
+      <div class="tab-group g-ans" role="presentation">
+        <span class="tab-group-label">Odpowiedzi</span>
+        <div class="tab-group-tabs" role="presentation">
+          <button role="tab" data-tab="rules">Własne odpowiedzi <span class="count" id="rules-count"></span></button>
+          <button role="tab" data-tab="builtin">Odpowiedzi wbudowane <span class="count" id="ovr-count"></span></button>
+          <button role="tab" data-tab="topics">Tematy <span class="count" id="topics-count"></span></button>
+          <button role="tab" data-tab="notices">Komunikaty <span class="count" id="notices-count"></span></button>
+        </div>
+      </div>
+      <div class="tab-group g-look" role="presentation">
+        <span class="tab-group-label">Wygląd i usługi</span>
+        <div class="tab-group-tabs" role="presentation">
+          <button role="tab" data-tab="design">Usługi i przyciski <span class="count" id="design-count"></span></button>
+          <button role="tab" data-tab="sitecfg">Strona i wygląd <span class="count" id="sitecfg-count"></span></button>
+        </div>
+      </div>
+      <div class="tab-group g-stats" role="presentation">
+        <span class="tab-group-label">Analiza</span>
+        <div class="tab-group-tabs" role="presentation">
+          <button role="tab" data-tab="logs">Rozmowy</button>
+          <button role="tab" data-tab="site">Kontrola strony <span class="count warn" id="site-count"></span></button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="workspace">
+    <main class="g-act">
+      <!-- Bezpieczeństwo -->
+      <section class="tab" id="tab-mode">
+        <div class="intro">
+          <h2>Bezpieczeństwo — stany nagłe i kryzys <span class="tip" tabindex="0" data-tip="Wykrywanie stanów nagłych (A — 112) i kryzysu psychicznego (B) działa zawsze, przed każdą inną odpowiedzią — nie da się go wyłączyć. Tu ustawiasz tylko szczegóły komunikatu B i to, co dzieje się po nim. Słowa alarmowe są w zakładce „Tematy”.">?</span></h2>
+          <p>Gdy wiadomość pacjenta zawiera słowo alarmowe, asystentka od razu pokazuje czerwoną kartę z numerem 112 — przed wszystkimi innymi odpowiedziami, także własnymi. Listę słów alarmowych zmieniasz w zakładce <strong>Tematy</strong> (za zgodą lekarza).</p>
+        </div>
+        <div class="panel-box">
+          <h3>Komunikat przy kryzysie psychicznym (B) <span class="tip" tabindex="0" data-tip="Decyzja właściciela serwisu (specyfikacja czatu, sekcja 11). Domyślnie wyłączone: komunikat zawiera tylko krótki tekst, przycisk 112 oraz psychiatrę i psychologa.">?</span></h3>
+          <label class="check"><input id="support-line" type="checkbox"> Dodaj linię z bezpłatnym telefonem wsparcia: „116 123 (dorośli) lub 116 111 (dzieci i młodzież)”</label>
+          <p class="muted small">Rekomendacja ze specyfikacji — dla osób, które nie są w bezpośrednim niebezpieczeństwie. Przed włączeniem sprawdź godziny działania numerów.</p>
+        </div>
+        <div class="panel-box">
+          <h3>Tryb kryzysowy po komunikacie B <span class="tip" tabindex="0" data-tip="Specyfikacja czatu, sekcja 11: po komunikacie B kolejne wiadomości bez konkretnej intencji dostają ponownie komunikat B i czerwoną kartę 112. Domyślnie tryb jest wyłączony (decyzja właściciela) — kolejne niejasne pytanie dostaje zwykłe „Nie jestem pewna…” z usługami. Limit i zakończenie konkretnym pytaniem działają po przełączeniu trybu.">?</span></h3>
+          <label class="field crisis-field"><span>Kiedy powtarzać komunikat B</span>
+            <select id="crisis-followup">
+              <option value="all">Niejasne wiadomości i pytania spoza tematu (jak w specyfikacji)</option>
+              <option value="unclear">Tylko niejasne wiadomości („nie wiem”, „nic”) — pytanie np. o pogodę dostaje zwykłą odpowiedź</option>
+              <option value="off">Nigdy — tryb kryzysowy wyłączony (domyślnie)</option>
+            </select>
+          </label>
+          <label class="field crisis-field"><span>Ile razy najwyżej powtórzyć komunikat B</span>
+            <input id="crisis-limit" type="number" min="0" max="50" step="1" inputmode="numeric" style="max-width:120px">
+            <span class="muted small" style="font-weight:400">Domyślnie 1. 0 = bez limitu, do końca rozmowy. Po tylu powtórzeniach czat wraca do zwykłych odpowiedzi.</span>
+          </label>
+          <label class="check"><input id="crisis-end-topic" type="checkbox"> Konkretne pytanie (np. o receptę, L4, cennik) kończy tryb kryzysowy (domyślnie włączone)</label>
+          <p class="muted small">Komunikat B pojawia się zawsze, gdy wiadomość sama zawiera frazę kryzysową — te ustawienia dotyczą tylko kolejnych wiadomości.</p>
+        </div>
+      </section>
+
+      <!-- Rejestracja -->
+      <section class="tab" id="tab-logging" hidden>
+        <div class="intro">
+          <h2>Rejestracja rozmów <span class="tip" tabindex="0" data-tip="Im wyższy poziom, tym więcej materiału do nauki asystentki — ale też więcej obowiązków RODO. Na start wystarczą „Statystyki”.">?</span></h2>
+          <p>Co zapisujemy z rozmów pacjentów. Imię pacjenta nie jest zapisywane nigdy, a numery (PESEL, telefony, konta) i adresy e-mail są automatycznie wycinane.</p>
+        </div>
+        <div id="log-levels" class="cards"></div>
+        <div class="panel-box grid-2">
+          <label class="field">
+            <span>Czas przechowywania (dni) <span class="tip" tabindex="0" data-tip="Po tylu dniach wpisy znikają same. Zalecane 30–90 dni — krócej znaczy bezpieczniej.">?</span></span>
+            <input id="retention" type="number" min="1" max="365" step="1">
+            <small class="muted">Starsze wpisy są usuwane automatycznie codziennie.</small>
+          </label>
+          <div id="consent-preview"></div>
+        </div>
+        <div class="notice" id="rodo-note"></div>
+      </section>
+
+      <!-- Własne odpowiedzi -->
+      <section class="tab" id="tab-rules" hidden>
+        <div class="intro">
+          <h2>Własne odpowiedzi na frazy <span class="tip" tabindex="0" data-tip="Najszybszy sposób, by poprawić asystentkę: wpisz frazę i gotową odpowiedź. Działa od razu po zapisaniu, bez trenowania.">?</span></h2>
+          <p>Gdy pytanie pacjenta zawiera wpisaną frazę, asystentka odpowiada Twoim tekstem — zamiast odpowiedzi wbudowanej. Wielkość liter i polskie znaki nie mają znaczenia; <code>*</code> na końcu frazy oznacza dowolną końcówkę (<code>sobot*</code> → sobota, sobotę). Gdy pasuje kilka reguł, wygrywa najdłuższa fraza. Stany nagłe (112) zawsze mają pierwszeństwo.</p>
+        </div>
+        <div class="tester panel-box">
+          <h3>Sprawdź odpowiedź <span class="tip" tabindex="0" data-tip="Wpisz pytanie tak, jak napisałby pacjent. Zobaczysz, co odpowie asystentka i dlaczego. Test nic nie zapisuje.">?</span></h3>
+          <form id="test-form" class="test-row">
+            <input id="test-input" type="text" placeholder="Wpisz pytanie tak jak pacjent, np. „czy pracujecie w sobotę?”" autocomplete="off">
+            <button class="btn primary" type="submit">Sprawdź</button>
+          </form>
+          <div id="test-result"></div>
+          <p class="muted small">Test używa bieżących, jeszcze niezapisanych ustawień.</p>
+        </div>
+        <div class="split">
+          <aside class="list-col">
+            <div class="list-head">
+              <input id="rules-search" type="search" placeholder="Szukaj…">
+              <button id="rule-add" class="btn primary" type="button" title="Dodaje nową własną odpowiedź na frazę.">+ Nowa</button>
+            </div>
+            <ul id="rules-list" class="item-list"></ul>
+          </aside>
+          <div id="rule-editor" class="editor"></div>
+        </div>
+      </section>
+
+      <!-- Tematy i słowa kluczowe -->
+      <section class="tab" id="tab-topics" hidden>
+        <div class="intro">
+          <h2>Tematy i słowa kluczowe <span class="tip" tabindex="0" data-tip="Słowa wpisuj bez polskich znaków albo z nimi — asystentka i tak je ujednolica. Gwiazdka na końcu słowa (np. „kregoslup*”, „rw* kulszow*”) oznacza „słowo zaczynające się od…” — dzięki niej asystentka rozumie odmianę: rwa, rwę, rwy.">?</span></h2>
+          <p>Po jakich słowach asystentka rozpoznaje temat (np. dopisz „rwa kulszowa” do dolegliwości albo „zwolnienie na dziecko” do L4) i jakie przyciski dodatkowe pokazuje przy dolegliwościach (np. „wysypka” → Dermatologia online). Słowa alarmowe (112, kryzys) edytujesz w osobnej sekcji poniżej — zmiany w nich powinien zatwierdzić lekarz.</p>
+        </div>
+        <div class="panel-box">
+          <h3>Sprawdź pytanie <span class="tip" tabindex="0" data-tip="Pokazuje, jak asystentka (bot) odpowie z Twoimi niezapisanymi zmianami.">?</span></h3>
+          <div class="row"><input id="topics-test" type="text" placeholder="np. mam rwę kulszową" style="flex:1"><button id="topics-test-btn" class="btn" type="button">Sprawdź</button></div>
+          <div id="topics-test-out" class="test-out"></div>
+        </div>
+        <div class="panel-box alarm-box">
+          <h3>Słowa alarmowe <span class="tip" tabindex="0" data-tip="Wystarczy jedno trafienie frazy w wiadomości — bez analizy kontekstu. Lepiej uruchomić alarm za często niż za rzadko. Gwiazdka na końcu słowa = dowolna końcówka (np. „przedawkow*”). Znak „=” na początku wyłącza tolerancję literówek (np. „=polknal*”, żeby nie łapać „pękł”).">?</span></h3>
+          <p class="muted small">Frazy, które natychmiast uruchamiają czerwoną kartę z 112 — przed wszystkimi innymi odpowiedziami. <strong>Zmiany powinien zatwierdzić lekarz.</strong> Kliknij frazę, żeby ją wyłączyć (przekreślona) albo przywrócić.</p>
+          <div id="alarms-list"></div>
+        </div>
+        <div class="list-head wide">
+          <input id="topics-search" type="search" placeholder="Szukaj tematu lub słowa…">
+          <label class="check"><input id="topics-only" type="checkbox"> tylko zmienione</label>
+        </div>
+        <div id="topics-list"></div>
+      </section>
+
+      <!-- Komunikaty okresowe -->
+      <section class="tab" id="tab-notices" hidden>
+        <div class="intro">
+          <h2>Komunikaty w czacie <span class="tip" tabindex="0" data-tip="Komunikat pokazuje się na górze rozmowy tylko między datą „od” a „do” (włącznie). Puste daty = bez ograniczenia.">?</span></h2>
+          <p>Krótka informacja z datą od–do, np. „24–26.12 infolinia nieczynna” albo „W listopadzie e-recepta taniej”. Pojawia się i znika sama.</p>
+        </div>
+        <div id="notices-list"></div>
+        <button id="notice-add" class="btn" type="button">+ Dodaj komunikat</button>
+      </section>
+
+      <!-- Strona i wygląd -->
+      <section class="tab" id="tab-sitecfg" hidden>
+        <div class="intro">
+          <h2>Strona i wygląd <span class="tip" tabindex="0" data-tip="Puste pole = wartość domyślna. Atrybuty data-title, data-accent, data-position i data-open w skrypcie na stronie kliniki mają pierwszeństwo przed tymi ustawieniami.">?</span></h2>
+          <p>Dane kontaktowe, imię konsultantki, napisy, wygląd okna czatu i adresy zakładek strony. Telefon, e-mail i godziny trafiają do odpowiedzi asystentki i do kontroli strony.</p>
+        </div>
+        <div id="sitecfg-list"></div>
+      </section>
+
+      <!-- Usługi i przyciski -->
+      <section class="tab" id="tab-design" hidden>
+        <div class="intro">
+          <h2>Usługi i przyciski <span class="tip" tabindex="0" data-tip="Zmiany działają w czacie po kliknięciu „Zapisz zmiany”. „Przywróć domyślne” wraca do wartości ze specyfikacji czatu.">?</span></h2>
+          <p>Kolorowe kafelki pod odpowiedziami prowadzą prosto do formularza wybranej usługi. Domyślne nazwy, ceny i kolory pochodzą ze specyfikacji czatu „Ilona” v1.1 — tu możesz je zmienić bez programisty: np. nową cenę, kolor albo kolejność przycisków. Czerwony jest zarezerwowany dla przycisku 112, a przyciski alarmowe (A, B) się nie zmieniają.</p>
+        </div>
+        <h3 class="group">Wygląd kafelków</h3>
+        <div id="tiles-cfg" class="card"></div>
+        <h3 class="group">Usługi — nazwa, cena, kolor</h3>
+        <div id="svc-list" class="svc-list"></div>
+        <h3 class="group">Przyciski pod odpowiedziami</h3>
+        <p class="muted small">Każda odpowiedź ma swój zestaw przycisków. Usługi wyświetlają się jako kolorowe kafelki z ceną, linki i pytania — jako małe szare przyciski.</p>
+        <div id="btn-cases"></div>
+      </section>
+
+      <!-- Odpowiedzi wbudowane -->
+      <section class="tab" id="tab-builtin" hidden>
+        <div class="intro">
+          <h2>Odpowiedzi wbudowane <span class="tip" tabindex="0" data-tip="Kliknij temat, żeby rozwinąć. Wpisz swoją wersję tekstu i zapisz. „Przywróć domyślną” cofa zmianę.">?</span></h2>
+          <p>Wszystkie teksty, którymi odpowiada asystentka (jeden plik: <code>chat/core/texts.js</code>) — pogrupowane według przypadków ze specyfikacji czatu (A–M), w kolejności sprawdzania. Wpisz własną wersję, żeby ją zmienić; puste pole = tekst domyślny. Teksty alarmowe (112, kryzys) są zablokowane.</p>
+        </div>
+        <div class="list-head wide">
+          <input id="builtin-search" type="search" placeholder="Szukaj tematu lub tekstu…">
+          <label class="check"><input id="builtin-only" type="checkbox"> tylko zmienione <span class="tip" tabindex="0" data-tip="Pokazuje tylko odpowiedzi, które już zmieniłeś.">?</span></label>
+        </div>
+        <div id="builtin-list"></div>
+      </section>
+
+      <!-- Rozmowy -->
+      <section class="tab" id="tab-logs" hidden>
+        <div class="intro">
+          <h2>Rozmowy <span class="tip" tabindex="0" data-tip="Przy poziomie „Statystyki” zobaczysz tylko tematy, bez treści. Treść pytań pojawia się od poziomu 2 — i tylko od pacjentów, którzy wyrazili zgodę.">?</span></h2>
+          <p>Zapisane wymiany pacjent ↔ asystentka (zakres zależy od poziomu rejestracji). Pytania „bez odpowiedzi” to najlepszy materiał do poprawek: dodaj własną odpowiedź albo dopisz słowa w zakładce „Tematy”.</p>
+        </div>
+        <div class="list-head wide">
+          <select id="logs-days">
+            <option value="7">Ostatnie 7 dni</option>
+            <option value="30" selected>Ostatnie 30 dni</option>
+            <option value="90">Ostatnie 90 dni</option>
+            <option value="365">Ostatni rok</option>
+          </select>
+          <select id="logs-filter" title="„Bez odpowiedzi” = pytania, których asystentka nie rozpoznała. To najlepsze kandydatki na własne odpowiedzi.">
+            <option value="all">Wszystkie</option>
+            <option value="unanswered">Bez odpowiedzi</option>
+            <option value="custom">Własne odpowiedzi</option>
+            <option value="safety">Stany nagłe</option>
+            <option value="text">Tylko z treścią</option>
+          </select>
+          <input id="logs-search" type="search" placeholder="Szukaj w pytaniach…">
+          <button id="logs-refresh" class="btn ghost" type="button">Odśwież</button>
+          <span class="spacer"></span>
+          <button id="logs-csv" class="btn ghost" type="button" title="Pobiera widoczne wiersze jako plik do Excela.">Eksport CSV</button>
+          <button id="logs-delete" class="btn danger" type="button" title="Trwale usuwa wszystkie zapisane rozmowy. Wymaga dwóch kliknięć.">Usuń wszystkie</button>
+        </div>
+        <div id="logs-stats" class="stats"></div>
+        <div id="logs-topics" class="panel-box"></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Data</th><th>Kto odpowiedział</th><th>Temat</th><th>Pytanie</th><th>Odpowiedź</th><th></th></tr></thead>
+            <tbody id="logs-body"></tbody>
+          </table>
+        </div>
+        <p id="logs-empty" class="muted center" hidden></p>
+      </section>
+      <!-- Kontrola strony -->
+      <section class="tab" id="tab-site" hidden>
+        <div class="intro">
+          <h2>Kontrola strony kliniki <span class="tip" tabindex="0" data-tip="Asystentka podaje linki, ceny i telefon ze strony lekarzeiterapeuci.pl. Gdy klinika coś na stronie zmieni, tu zobaczysz, które odpowiedzi trzeba poprawić.">?</span></h2>
+          <p>Sprawdza, czy linki w odpowiedziach asystentki nadal działają (błędy 404, przekierowania, brakujące sekcje typu <code>#cennik</code>), czy na stronie są te same ceny, numer infolinii i godziny, oraz które strony zmieniły treść od poprzedniego sprawdzenia.</p>
+          <p id="site-auto" class="small"></p>
+        </div>
+        <div class="row">
+          <button id="site-run" class="btn primary" type="button" title="Pobiera teraz wszystkie strony, do których prowadzą odpowiedzi. Trwa zwykle 10–40 sekund.">Sprawdź teraz</button>
+          <span id="site-when" class="muted small"></span>
+        </div>
+        <div id="site-stats" class="stats"></div>
+        <div id="site-problems"></div>
+        <div id="site-facts" class="panel-box"></div>
+        <div id="site-changes" class="panel-box"></div>
+        <details id="site-all" class="panel-box">
+          <summary>Wszystkie sprawdzone linki</summary>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Stan</th><th>Adres</th><th>Używany w</th></tr></thead><tbody id="site-body"></tbody></table></div>
+        </details>
+      </section>
+    </main>
+    <!-- Podgląd czatu na żywo — to samo okno co na stronie z czatami, z niezapisanymi ustawieniami -->
+    <aside id="live-preview" class="live-preview" aria-label="Podgląd czatu">
+      <div class="lp-head">
+        <strong>Podgląd czatu</strong>
+        <span class="tip" tabindex="0" data-tip="Tak zobaczy czat pacjent. Podgląd odświeża się sam po każdej zmianie w panelu (także niezapisanej). Możesz w nim pisać i klikać — rozmowa nie jest nigdzie zapisywana.">?</span>
+        <span class="spacer"></span>
+        <button id="lp-reset" class="btn ghost small" type="button" title="Zaczyna rozmowę od nowa (powitanie z kafelkami).">Od nowa</button>
+      </div>
+      <div id="lp-chat" class="lp-chat"></div>
+    </aside>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="admin.js"></script>
+</body>
+</html>
