@@ -194,7 +194,7 @@ Pola `config` (zapisywane są tylko **zmiany** względem wartości domyślnych z
 
 Zasady:
 
-- **`chat/settings/schema.js → sanitizeConfig()`** sprawdza każde pole (typy, limity, bezpieczne linki tylko `https:`/`tel:`/`mailto:`, obrazy tylko jako `data:` PNG/JPEG/WebP). Używają go czat, panel i serwer panelu — serwer nie ufa przeglądarce.
+- **`chat/settings/schema.js → sanitizeConfig()`** sprawdza każde pole (typy, limity, tylko znane klucze — nie np. `constructor`, bezpieczne linki tylko `https:`/`tel:`/`mailto:`, frazy własnych odpowiedzi min. 3 znaki, obrazy tylko jako `data:` PNG/JPEG/WebP). Używają go czat, panel i serwer panelu — serwer nie ufa przeglądarce.
 - **`chat/core/knowledge.js → applySettings(cfg)`** to jedyne miejsce, które nakłada ustawienia na wiedzę czatu. Zawsze startuje od wartości domyślnych, więc usunięcie zmiany w panelu przywraca dokument.
 - Nowe pole ustawień: dodaj je do `DEFAULT_CONFIG` i `sanitizeConfig()` (`schema.js`), zastosuj w `applySettings()` i dopisz do testu eksportu/importu w `tools/test.js` (test pilnuje, żeby żadne pole nie zginęło).
 

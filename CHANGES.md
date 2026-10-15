@@ -13,5 +13,8 @@ Zgodność wersji z tym plikiem sprawdza `npm run check` (także automatycznie p
 
 ## 2026-10-15
 
+### 1.0.1
+- Poprawki z audytu: frazy alarmowe, CSV bez formuł, ochrona rejestru i blokada haseł w bazie, walidacja kluczy, komunikaty w czasie lokalnym, kontrola strony, serwer lokalny, linki https, frazy min. 3 znaki, widżet
+
 ### 1.0.0
 - Pierwsza wersja w repozytorium Ilona: czat (bot regułowy) z ustawieniami domyślnymi ze specyfikacji „Ilona” v1.1 oraz panel administracyjny, kontrola strony kliniki, strona testowa i dokumentacja.

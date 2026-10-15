@@ -129,17 +129,20 @@ W `wrangler.toml` ustaw też `ALLOWED_ORIGINS` — domeny stron, z których czat
 | Pełny panel tylko lokalnie (`127.0.0.1`); publicznie wyłącznie podgląd demo | Nikt z internetu nie zaloguje się do serwera ani nie zapisze ustawień |
 | Zapis pliku ustawień tylko z lokalnego panelu (sprawdzany Host i Origin) | Żadna inna strona otwarta w przeglądarce nie zmieni `settings.json` |
 | Hasło (`ADMIN_PASSWORD`), porównywane w stałym czasie | Bez hasła nie da się odczytać ani zmienić ustawień czy rozmów |
-| Blokada po 10 błędnych hasłach (15 min) | Chroni przed zgadywaniem hasła |
+| Blokada po 10 błędnych hasłach (15 min), licznik w bazie | Chroni przed zgadywaniem hasła — we wszystkich instancjach serwera |
 | `ADMIN_ORIGINS` (domyślnie tylko `localhost:5050`) | Część administracyjna działa tylko z lokalnego panelu |
 | **`ADMIN_IPS`** (opcjonalne) | Część administracyjna istnieje tylko dla Twojego IP — dla innych 404 |
 | Cloudflare Access (opcjonalne, zalecane) | Logowanie e-mailem / Google przed dostępem do `/admin/*` |
 | Serwer ponownie sprawdza i przycina wszystko, co przyśle przeglądarka | Błędne lub złośliwe dane nie trafią do bazy |
+| Górny limit rejestru: 200 000 wpisów | Zasypanie rejestru fałszywymi wpisami nie zapełni bazy (nowe wpisy są wtedy pomijane) |
 
 **Ograniczenie do adresu IP:** sprawdź swój adres (https://ifconfig.me), w `wrangler.toml` odkomentuj `ADMIN_IPS = "TWÓJ.ADRES.IP"` i `npx wrangler deploy`. Domowe IP potrafi się zmieniać — wtedy zaktualizuj adres.
 
 **Cloudflare Access:** Zero Trust → Access → Applications → Add application → Self-hosted: domena Workera, ścieżka `/admin/*`, polityka „Allow” dla Twojego e-maila.
 
 **Hasło:** zmiana — `npx wrangler secret put ADMIN_PASSWORD` w folderze `panel/server`.
+
+**Limit zapytań (zalecane przy włączonym rejestrze rozmów):** nagłówek `Origin` sprawdzany przy zapisie rozmów da się podrobić spoza przeglądarki, a limit 60 wpisów na minutę liczy każda instancja serwera osobno. Dodaj regułę w Cloudflare: domena Workera → **Security → WAF → Rate limiting rules** → ścieżka `/log`, np. 30 zapytań na minutę z jednego IP, akcja „Block”. Taka sama reguła dla `/admin/*` (np. 20 na minutę) dodatkowo utrudnia zgadywanie hasła.
 
 ---
 
