@@ -53,7 +53,7 @@ git pull
 npm run panel
 ```
 
-Otwórz **http://localhost:5050/panel/**. Strona testowa czatu: **http://localhost:5050/**. Zatrzymanie: `Ctrl+C`.
+Otwórz **http://localhost:5050/panel/**. Strona testowa czatu: **http://localhost:5050/test.html**, podgląd strony kliniki z czatem: **http://localhost:5050/demo/**. Zatrzymanie: `Ctrl+C`.
 
 Lokalny serwer nasłuchuje tylko na `127.0.0.1` — nikt z sieci ani z internetu nie ma do niego dostępu. Projekt nie ma zależności (`npm install` nie jest potrzebne).
 

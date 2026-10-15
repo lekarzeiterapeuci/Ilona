@@ -138,7 +138,8 @@ function send(res, status, text) {
 server.listen(PORT, HOST, () => {
   console.log('');
   console.log(`  Panel sterowania:   http://localhost:${PORT}/panel/`);
-  console.log(`  Strona testowa:     http://localhost:${PORT}/`);
+  console.log(`  Strona testowa:     http://localhost:${PORT}/test.html`);
+  console.log(`  Podgląd strony:     http://localhost:${PORT}/demo/`);
   console.log(`  Plik ustawień:      ${SETTINGS_FILE}`);
   console.log('');
   console.log('  Serwer działa tylko na tym komputerze (127.0.0.1). Zatrzymanie: Ctrl+C');

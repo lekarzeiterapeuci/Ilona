@@ -13,7 +13,7 @@ Jedna linijka przed `</body>` (szczegóły: [docs/WDROZENIE.md](docs/WDROZENIE.m
 <script src="https://lekarzeiterapeuci.github.io/Ilona/embed.js" defer></script>
 ```
 
-Strona testowa czatu: `https://lekarzeiterapeuci.github.io/Ilona/`
+Podgląd strony kliniki z czatem Ilona: `https://lekarzeiterapeuci.github.io/Ilona/` (prowadzi do `demo/`). Strona testowa czatu: `https://lekarzeiterapeuci.github.io/Ilona/test.html`
 
 ## Dokumentacja
 
@@ -28,7 +28,9 @@ Strona testowa czatu: `https://lekarzeiterapeuci.github.io/Ilona/`
 ```
 embed.js               jedyny skrypt wklejany na stronę www
 settings.json          ustawienia czatu (źródło „plik”) — zapisuje je panel
-index.html             strona testowa czatu
+index.html             przekierowanie do demo/
+test.html              strona testowa czatu
+demo/                  podgląd: kopia strony głównej lekarzeiterapeuci.pl z czatem Ilona zamiast „czatu na żywo”
 chat/                  CZAT — wszystko, co ładuje strona www (nie zależy od panelu)
   embed-core.js          start: ustawienia → silnik → widżet
   config.js              adres serwera panelu (opcjonalny)

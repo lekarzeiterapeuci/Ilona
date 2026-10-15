@@ -35,7 +35,7 @@ jobs:
         run: node tools/check-version.js
       - name: Testy
         run: node --no-warnings tools/test.js
-      # Na stronie potrzebny jest tylko czat (embed.js, chat/, settings.json), strona testowa
+      # Na stronie potrzebny jest tylko czat (embed.js, chat/, settings.json), podgląd strony kliniki (demo/), strona testowa (test.html)
       # i podgląd panelu (na publicznym adresie działa wyłącznie w trybie demo — prawdziwy
       # panel uruchamia się lokalnie: npm run panel). Kod serwera panelu i narzędzia nie są publikowane.
       - name: Usuń części niepubliczne

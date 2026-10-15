@@ -72,7 +72,7 @@ Workflow `.github/workflows/pages.yml` publikuje repozytorium pod `https://lekar
 
 1. uruchamia kontrolę wersji (`tools/check-version.js`) i testy (`tools/test.js`) — **jeśli coś nie przechodzi, strona zostaje w poprzedniej wersji**,
 2. usuwa części niepubliczne (`panel/server`, `tools`, `docs`, `.github`),
-3. publikuje resztę: `embed.js`, `chat/`, `settings.json`, stronę testową `index.html` i podgląd panelu (`panel/` — publicznie działa tylko w trybie demo).
+3. publikuje resztę: `embed.js`, `chat/`, `settings.json`, stronę testową `test.html`, podgląd strony kliniki z czatem (`demo/`, na nią prowadzi `index.html`) i podgląd panelu (`panel/` — publicznie działa tylko w trybie demo).
 
 **Jednorazowo:** repozytorium → **Settings → Pages → Source: GitHub Actions**. GitHub Pages za darmo wymaga repozytorium **publicznego** (kod czatu i tak jest widoczny w przeglądarce każdego pacjenta). Przy repozytorium prywatnym — płatny plan GitHub albo własny serwer.
 
@@ -86,7 +86,7 @@ Czat to zwykłe pliki statyczne. Na serwer kopiujesz:
 embed.js
 settings.json
 chat/            (cały folder)
-index.html       (opcjonalnie — strona testowa)
+test.html        (opcjonalnie — strona testowa)
 ```
 
 Nie kopiujesz: `panel/server/`, `panel/backups/`, `tools/`, `docs/`, `.git/`, `.github/`. Folder `panel/` (podgląd demo) jest opcjonalny.

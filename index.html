@@ -4,71 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>Czat Ilona — strona testowa</title>
+  <title>Czat Ilona — lekarzeiterapeuci.pl</title>
   <link rel="icon" href="chat/img/avatar.png">
-  <style>
-    :root { --ink: #1d1d1f; --muted: #5f6b7a; --line: #e1e4ea; --bg: #f5f6f9; --brand: #2e2787; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
-    .page { max-width: 880px; margin: 0 auto; padding: 32px 16px 120px; }
-    header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
-    header img { width: 48px; height: 48px; border-radius: 50%; }
-    h1 { font-size: 24px; margin: 0; }
-    .muted { color: var(--muted); }
-    .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 22px; margin-bottom: 16px; }
-    .card h2 { font-size: 18px; margin: 0 0 8px; }
-    pre { background: #10162a; color: #e8ecf8; padding: 14px; border-radius: 10px; overflow-x: auto; font-size: 13.5px; }
-    .row { display: flex; flex-wrap: wrap; gap: 10px; }
-    .btn { display: inline-block; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); text-decoration: none; font-weight: 600; cursor: pointer; font: inherit; }
-    .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
-    code { background: #eef0f6; padding: 1px 6px; border-radius: 6px; font-size: 14px; }
-    ul { padding-left: 20px; }
-  </style>
+  <!-- Strona główna publikacji prowadzi do podglądu strony kliniki z czatem Ilona (demo/).
+       Strona testowa dla informatyka: test.html, panel (podgląd demo): panel/. -->
+  <meta http-equiv="refresh" content="0; url=demo/">
 </head>
-<body>
-  <div class="page">
-    <header>
-      <img src="chat/img/avatar.png" alt="">
-      <div>
-        <h1>Czat „Ilona” — strona testowa</h1>
-        <div class="muted">lekarzeiterapeuci.pl · wersja <span id="version">—</span></div>
-      </div>
-    </header>
-
-    <div class="card">
-      <h2>Tak czat wygląda na stronie www</h2>
-      <p>Przycisk czatu jest w prawym dolnym rogu — to ten sam skrypt, który wkleja się na stronę kliniki. Ustawienia są czytane tak samo jak na produkcji: serwer panelu (jeśli podany), plik <code>settings.json</code> obok skryptu albo wartości domyślne.</p>
-      <div class="row">
-        <button class="btn primary" type="button" onclick="window.LTChat && LTChat.open()">Otwórz czat</button>
-        <button class="btn" type="button" onclick="window.LTChat && LTChat.reset && LTChat.reset()">Nowa rozmowa</button>
-        <a class="btn" href="panel/">Panel administracyjny</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Wklejenie na stronę</h2>
-      <p>Jeden znacznik, np. przed <code>&lt;/body&gt;</code> (szczegóły: <code>docs/WDROZENIE.md</code>):</p>
-      <pre id="snippet">&lt;script src="https://lekarzeiterapeuci.github.io/Ilona/embed.js" defer&gt;&lt;/script&gt;</pre>
-      <p class="muted">Opcjonalnie: <code>data-panel</code> (serwer panelu), <code>data-title</code>, <code>data-accent</code>, <code>data-position="left"</code>, <code>data-open="true"</code>.</p>
-    </div>
-
-    <div class="card">
-      <h2>Do sprawdzenia przed wdrożeniem</h2>
-      <ul>
-        <li>„boli mnie kręgosłup” → konsultacja lekarska z kafelkami i cenami,</li>
-        <li>„ile kosztuje e-recepta” → cena i kafelek e-Recepty,</li>
-        <li>„potrzebuję L4” → kafelek L4 online,</li>
-        <li>„boli mnie w klatce piersiowej” → czerwona karta z 112 na dole,</li>
-        <li>„jak się z wami skontaktować” → infolinia i e-mail.</li>
-      </ul>
-    </div>
-  </div>
-
-  <script type="module">
-    import { VERSION } from './chat/version.js';
-    document.getElementById('version').textContent = VERSION;
-  </script>
-  <!-- Ten sam znacznik co na stronie kliniki (adres względny, żeby działał też lokalnie). -->
-  <script src="embed.js" defer></script>
+<body style="font:16px system-ui,sans-serif;padding:24px">
+  <p>Przekierowanie do <a href="demo/">podglądu strony z czatem Ilona</a>…
+  Strona testowa czatu: <a href="test.html">test.html</a>.</p>
 </body>
 </html>
